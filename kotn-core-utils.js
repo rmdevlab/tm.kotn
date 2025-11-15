@@ -441,6 +441,10 @@ function makeCollapsible({ id, title = 'Panel', panel, header, miniLabel = title
     }
   });
   header.appendChild(btn);
+      // Prevent header drag from swallowing the collapse click
+    btn.addEventListener('pointerdown', e => e.stopPropagation());
+    btn.addEventListener('mousedown',  e => e.stopPropagation()); // legacy safety
+    btn.addEventListener('click',      e => { e.stopPropagation(); setCollapsed(true); });
 
   // Mini pill
   const mini = dom.create('div', {
@@ -840,4 +844,5 @@ KOTN.ui.makeCollapsible = makeCollapsible;
   KOTN.log = log;
 
 })();
+
 
