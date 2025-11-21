@@ -1,30 +1,21 @@
 // KOTN Core Utilities
-// v0.1.0
+// v0.2.0
 
-(function () {
+(function() {
   'use strict';
 
-  // ---------------------------------------------------------------------------
-  // Root namespace
-  // ---------------------------------------------------------------------------
   const KOTN = (window.KOTN = window.KOTN || {});
 
-  // ---------------------------------------------------------------------------
-  // DOM helpers
-  // ---------------------------------------------------------------------------
   const dom = {
     qs(selector, root = document) {
       return root.querySelector(selector);
     },
-
     qsa(selector, root = document) {
       return Array.from(root.querySelectorAll(selector));
     },
-
     norm(text) {
       return (text || '').trim().replace(/\s+/g, ' ');
     },
-
     visible(el) {
       if (!el) return false;
       if (!(el instanceof Element)) return false;
@@ -35,7 +26,6 @@
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
     },
-
     create(tag, props = {}, children = []) {
       const el = document.createElement(tag);
       Object.entries(props).forEach(([key, value]) => {
@@ -49,7 +39,7 @@
         }
       });
       if (!Array.isArray(children)) children = [children];
-      children.forEach((child) => {
+      children.forEach(child => {
         if (child == null) return;
         if (child instanceof Node) {
           el.appendChild(child);
@@ -59,21 +49,16 @@
       });
       return el;
     },
-
     waitFor(selector, options = {}) {
-      const {
-        root = document,
-        timeoutMs = 30000,
-        pollMs = 50
-      } = options;
-
+      const root = options.root || document;
+      const timeoutMs = options.timeoutMs == null ? 30000 : options.timeoutMs;
+      const pollMs = options.pollMs == null ? 50 : options.pollMs;
       return new Promise((resolve, reject) => {
         const found = root.querySelector(selector);
         if (found) {
           resolve(found);
           return;
         }
-
         const start = Date.now();
         const id = setInterval(() => {
           const el = root.querySelector(selector);
@@ -82,7 +67,7 @@
             resolve(el);
           } else if (Date.now() - start > timeoutMs) {
             clearInterval(id);
-            reject(new Error(`waitFor: timeout waiting for ${selector}`));
+            reject(new Error('waitFor: timeout waiting for ' + selector));
           }
         }, pollMs);
       });
@@ -91,73 +76,53 @@
 
   KOTN.dom = dom;
 
-  // ---------------------------------------------------------------------------
-  // Async / concurrency helpers
-  // ---------------------------------------------------------------------------
   const asyncUtils = {
     sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
+      return new Promise(resolve => setTimeout(resolve, ms));
     },
-
     async retry(fn, options = {}) {
-      const {
-        retries = 3,
-        delayMs = 500,
-        factor = 2
-      } = options;
+      const retries = options.retries == null ? 3 : options.retries;
+      const factor = options.factor == null ? 2 : options.factor;
+      let delayMs = options.delayMs == null ? 500 : options.delayMs;
       let attempt = 0;
       let lastErr;
-      let delay = delayMs;
-
       while (attempt <= retries) {
         try {
           return await fn(attempt);
         } catch (err) {
           lastErr = err;
-          if (attempt === retries) break;
-          // eslint-disable-next-line no-console
+          if (attempt === retries) {
+            break;
+          }
           console.warn('[KOTN retry]', err);
-          // eslint-disable-next-line no-await-in-loop
-          await asyncUtils.sleep(delay);
-          delay *= factor;
+          await asyncUtils.sleep(delayMs);
+          delayMs *= factor;
           attempt += 1;
         }
       }
-
       throw lastErr;
     },
-
     async runWithConcurrency(items, worker, options = {}) {
-      const {
-        concurrency = 4,
-        onProgress
-      } = options;
-
+      const concurrency = options.concurrency == null ? 4 : options.concurrency;
+      const onProgress = options.onProgress;
       const results = [];
       let index = 0;
       let completed = 0;
       const total = items.length;
-
       async function workerLoop() {
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const current = index;
           if (current >= total) return;
           index += 1;
           const item = items[current];
-          // eslint-disable-next-line no-await-in-loop
           const result = await worker(item, current);
           results[current] = result;
           completed += 1;
           if (onProgress) {
-            onProgress({
-              completed,
-              total
-            });
+            onProgress({ completed, total });
           }
         }
       }
-
       const lanes = [];
       const laneCount = Math.max(1, Math.min(concurrency, total));
       for (let i = 0; i < laneCount; i += 1) {
@@ -170,42 +135,53 @@
 
   KOTN.async = asyncUtils;
 
-  // ---------------------------------------------------------------------------
-  // State / storage helpers
-  // ---------------------------------------------------------------------------
   function makeStorageDriver(scope) {
     if (scope === 'session') {
       return {
-        get: (key) => window.sessionStorage.getItem(key),
-        set: (key, value) => window.sessionStorage.setItem(key, value),
-        remove: (key) => window.sessionStorage.removeItem(key)
+        get(key) {
+          return window.sessionStorage.getItem(key);
+        },
+        set(key, value) {
+          window.sessionStorage.setItem(key, value);
+        },
+        remove(key) {
+          window.sessionStorage.removeItem(key);
+        }
       };
     }
-
     if (scope === 'gm' && typeof GM_getValue === 'function' && typeof GM_setValue === 'function') {
       return {
-        get: (key) => GM_getValue(key),
-        set: (key, value) => GM_setValue(key, value),
-        remove: (key) => GM_deleteValue && GM_deleteValue(key)
+        get(key) {
+          return GM_getValue(key);
+        },
+        set(key, value) {
+          GM_setValue(key, value);
+        },
+        remove(key) {
+          if (typeof GM_deleteValue === 'function') {
+            GM_deleteValue(key);
+          }
+        }
       };
     }
-
-    // default: localStorage
     return {
-      get: (key) => window.localStorage.getItem(key),
-      set: (key, value) => window.localStorage.setItem(key, value),
-      remove: (key) => window.localStorage.removeItem(key)
+      get(key) {
+        return window.localStorage.getItem(key);
+      },
+      set(key, value) {
+        window.localStorage.setItem(key, value);
+      },
+      remove(key) {
+        window.localStorage.removeItem(key);
+      }
     };
   }
 
   function createStore(config) {
-    const {
-      name,
-      scope = 'local'
-    } = config;
-    const storageKey = `KOTN:${name}`;
+    const name = config.name;
+    const scope = config.scope || 'local';
+    const storageKey = 'KOTN:' + name;
     const driver = makeStorageDriver(scope);
-
     function readAll() {
       try {
         const raw = driver.get(storageKey);
@@ -214,21 +190,17 @@
         if (parsed && typeof parsed === 'object') return parsed;
         return {};
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[KOTN state] failed to parse store', name, err);
+        console.warn('[KOTN state] failed to parse store ' + name, err);
         return {};
       }
     }
-
     function writeAll(obj) {
       try {
         driver.set(storageKey, JSON.stringify(obj));
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[KOTN state] failed to write store', name, err);
+        console.warn('[KOTN state] failed to write store ' + name, err);
       }
     }
-
     return {
       get(key, defaultValue) {
         const all = readAll();
@@ -254,26 +226,13 @@
     createStore
   };
 
-  // ---------------------------------------------------------------------------
-  // UI / panel helpers
-  // ---------------------------------------------------------------------------
   function createPanel(options) {
-    const {
-      id,
-      title = 'KOTN',
-      parent = document.body,
-      rememberPosition = true,
-      defaultPosition = {
-        top: 80,
-        right: 20
-      }
-    } = options;
-
-    const store = rememberPosition ? createStore({
-      name: `panel:${id || title}`,
-      scope: 'local'
-    }) : null;
-
+    const id = options.id;
+    const title = options.title || 'KOTN';
+    const parent = options.parent || document.body;
+    const rememberPosition = options.rememberPosition !== false;
+    const defaultPosition = options.defaultPosition || { top: 80, right: 20 };
+    const store = rememberPosition ? createStore({ name: 'panel:' + (id || title), scope: 'local' }) : null;
     const panel = dom.create('div', {
       className: 'kotn-panel',
       style: {
@@ -284,7 +243,7 @@
         maxWidth: '420px',
         background: '#111',
         color: '#f5f5f5',
-        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
         fontSize: '12px',
         borderRadius: '4px',
         boxShadow: '0 2px 12px rgba(0,0,0,0.35)',
@@ -292,7 +251,6 @@
         zIndex: '999999'
       }
     });
-
     const header = dom.create('div', {
       className: 'kotn-panel-header',
       style: {
@@ -306,11 +264,8 @@
         justifyContent: 'space-between'
       }
     }, [
-      dom.create('span', {
-        textContent: title
-      })
+      dom.create('span', { textContent: title })
     ]);
-
     const body = dom.create('div', {
       className: 'kotn-panel-body',
       style: {
@@ -319,16 +274,13 @@
         overflow: 'auto'
       }
     });
-
     panel.appendChild(header);
     panel.appendChild(body);
     parent.appendChild(panel);
-
     function applyInitialPosition() {
       const stored = store ? store.get('pos') : null;
       let top = defaultPosition.top;
       let left;
-
       if (stored && typeof stored.top === 'number' && typeof stored.left === 'number') {
         top = stored.top;
         left = stored.left;
@@ -339,18 +291,13 @@
       } else {
         left = 20;
       }
-
-      panel.style.top = `${Math.max(0, top)}px`;
-      panel.style.left = `${Math.max(0, left)}px`;
+      panel.style.top = String(Math.max(0, top)) + 'px';
+      panel.style.left = String(Math.max(0, left)) + 'px';
     }
-
     applyInitialPosition();
-
     let dragStart = null;
-
     function onPointerDown(ev) {
       if (ev.button !== 0) return;
-      // If the click is on an interactive control, do not initiate drag
       const tag = (ev.target && ev.target.tagName || '').toUpperCase();
       if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
         return;
@@ -363,24 +310,27 @@
       };
       header.setPointerCapture(ev.pointerId);
     }
-
     function onPointerMove(ev) {
       if (!dragStart) return;
       const dx = ev.clientX - dragStart.x;
       const dy = ev.clientY - dragStart.y;
       let newTop = dragStart.top + dy;
       let newLeft = dragStart.left + dx;
-
       const maxTop = window.innerHeight - panel.offsetHeight;
       const maxLeft = window.innerWidth - panel.offsetWidth;
-
-      newTop = Math.min(Math.max(0, newTop), Math.max(0, maxTop));
-      newLeft = Math.min(Math.max(0, newLeft), Math.max(0, maxLeft));
-
-      panel.style.top = `${newTop}px`;
-      panel.style.left = `${newLeft}px`;
+      if (maxTop > 0) {
+        newTop = Math.min(Math.max(0, newTop), maxTop);
+      } else {
+        newTop = 0;
+      }
+      if (maxLeft > 0) {
+        newLeft = Math.min(Math.max(0, newLeft), maxLeft);
+      } else {
+        newLeft = 0;
+      }
+      panel.style.top = String(newTop) + 'px';
+      panel.style.left = String(newLeft) + 'px';
     }
-
     function onPointerUp(ev) {
       if (!dragStart) return;
       if (rememberPosition && store) {
@@ -392,24 +342,19 @@
       header.releasePointerCapture(ev.pointerId);
       dragStart = null;
     }
-
     header.addEventListener('pointerdown', onPointerDown);
     header.addEventListener('pointermove', onPointerMove);
     header.addEventListener('pointerup', onPointerUp);
     header.addEventListener('pointercancel', onPointerUp);
-
     return {
       panel,
       header,
       body,
       setPosition(top, left) {
-        panel.style.top = `${top}px`;
-        panel.style.left = `${left}px`;
+        panel.style.top = String(top) + 'px';
+        panel.style.left = String(left) + 'px';
         if (rememberPosition && store) {
-          store.set('pos', {
-            top,
-            left
-          });
+          store.set('pos', { top, left });
         }
       }
     };
@@ -419,136 +364,151 @@
     createPanel
   };
 
-  // --- Collapsible wrapper for panels (mini-pill + persistence) ---
-function makeCollapsible({ id, title = 'Panel', panel, header, miniLabel = title }) {
-  if (!panel || !header) throw new Error('makeCollapsible requires panel and header from createPanel');
-
-  const store = createStore({ name: `panel:${id}`, scope: 'local' });
-
-  // Collapse button in header
-  const btn = dom.create('button', {
-    type: 'button',
-    textContent: '▣',
-    title: 'Collapse',
-    style: {
-      marginLeft: '8px',
-      border: '1px solid #333',
-      background: '#1d1d1d',
-      color: '#f5f5f5',
-      borderRadius: '6px',
-      padding: '2px 6px',
-      cursor: 'pointer'
+  function makeCollapsible(config) {
+    const id = config.id;
+    const title = config.title || 'Panel';
+    const panel = config.panel;
+    const header = config.header;
+    const miniLabel = config.miniLabel || title;
+    if (!panel || !header) {
+      throw new Error('makeCollapsible requires panel and header from createPanel');
     }
-  });
-  header.appendChild(btn);
-      // Prevent header drag from swallowing the collapse click
+    const store = createStore({ name: 'panel:' + id, scope: 'local' });
+    const btn = dom.create('button', {
+      type: 'button',
+      textContent: '▣',
+      title: 'Collapse',
+      style: {
+        marginLeft: '8px',
+        border: '1px solid #333',
+        background: '#1d1d1d',
+        color: '#f5f5f5',
+        borderRadius: '6px',
+        padding: '2px 6px',
+        cursor: 'pointer'
+      }
+    });
+    header.appendChild(btn);
     btn.addEventListener('pointerdown', e => e.stopPropagation());
-    btn.addEventListener('mousedown',  e => e.stopPropagation()); // legacy safety
-    btn.addEventListener('click',      e => { e.stopPropagation(); setCollapsed(true); });
-
-  // Mini pill
-  const mini = dom.create('div', {
-    className: 'kotn-mini-pill',
-    style: {
-      position: 'fixed',
-      right: '16px',
-      top: '16px',
-      zIndex: '999999',
-      background: '#111',
-      color: '#fff',
-      border: '1px solid #2f2f2f',
-      borderRadius: '10px',
-      padding: '6px 8px',
-      fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif',
-      fontSize: '12px',
-      display: 'none',
-      alignItems: 'center',
-      gap: '8px',
-      cursor: 'pointer',
-      boxShadow: '0 6px 18px rgba(0,0,0,.35)'
+    btn.addEventListener('mousedown', e => e.stopPropagation());
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      setCollapsed(true);
+    });
+    const mini = dom.create('div', {
+      className: 'kotn-mini-pill',
+      style: {
+        position: 'fixed',
+        right: '16px',
+        top: '16px',
+        zIndex: '999999',
+        background: '#111',
+        color: '#fff',
+        border: '1px solid #2f2f2f',
+        borderRadius: '10px',
+        padding: '6px 8px',
+        fontFamily: 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif',
+        fontSize: '12px',
+        display: 'none',
+        alignItems: 'center',
+        gap: '8px',
+        cursor: 'pointer',
+        boxShadow: '0 6px 18px rgba(0,0,0,0.35)'
+      }
+    }, [
+      dom.create('span', { textContent: miniLabel })
+    ]);
+    document.body.appendChild(mini);
+    (function restore() {
+      const pos = store.get('miniPos');
+      if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+        mini.style.left = String(pos.left) + 'px';
+        mini.style.top = String(pos.top) + 'px';
+        mini.style.right = 'auto';
+      }
+      if (store.get('collapsed', false)) {
+        panel.style.display = 'none';
+        mini.style.display = 'inline-flex';
+      }
+    })();
+    function setCollapsed(on) {
+      panel.style.display = on ? 'none' : '';
+      mini.style.display = on ? 'inline-flex' : 'none';
+      store.set('collapsed', !!on);
     }
-  }, [ dom.create('span', { textContent: miniLabel }) ]);
-  document.body.appendChild(mini);
-
-  // Restore mini position and collapsed state
-  (function restore() {
-    const pos = store.get('miniPos');
-    if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
-      mini.style.left = pos.left + 'px';
-      mini.style.top  = pos.top  + 'px';
-      mini.style.right = 'auto';
-    }
-    if (store.get('collapsed', false)) {
-      panel.style.display = 'none';
-      mini.style.display = 'inline-flex';
-    }
-  })();
-
-  function setCollapsed(on) {
-    panel.style.display = on ? 'none' : '';
-    mini.style.display = on ? 'inline-flex' : 'none';
-    store.set('collapsed', !!on);
+    (function makeMiniDraggable() {
+      function clamp(v, lo, hi) {
+        return Math.max(lo, Math.min(hi, v));
+      }
+      let dragging = false;
+      let sx = 0;
+      let sy = 0;
+      let ox = 0;
+      let oy = 0;
+      function onDown(e) {
+        if (e.type === 'mousedown' && e.button !== 0) return;
+        const pt = e.touches ? e.touches[0] : e;
+        const r = mini.getBoundingClientRect();
+        dragging = true;
+        sx = pt.clientX;
+        sy = pt.clientY;
+        ox = r.left;
+        oy = r.top;
+        mini.style.right = 'auto';
+        e.preventDefault();
+      }
+      function onMove(e) {
+        if (!dragging) return;
+        const pt = e.touches ? e.touches[0] : e;
+        const dx = pt.clientX - sx;
+        const dy = pt.clientY - sy;
+        const left = clamp(ox + dx, 8, window.innerWidth - mini.offsetWidth - 8);
+        const top = clamp(oy + dy, 8, window.innerHeight - mini.offsetHeight - 8);
+        mini.style.left = String(left) + 'px';
+        mini.style.top = String(top) + 'px';
+      }
+      function onUp() {
+        if (!dragging) return;
+        dragging = false;
+        try {
+          const r = mini.getBoundingClientRect();
+          store.set('miniPos', {
+            left: Math.round(r.left),
+            top: Math.round(r.top)
+          });
+        } catch (err) {
+        }
+      }
+      mini.addEventListener('mousedown', onDown);
+      mini.addEventListener('touchstart', onDown, { passive: false });
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('mouseup', onUp);
+      window.addEventListener('touchend', onUp);
+    })();
+    btn.addEventListener('click', () => setCollapsed(true));
+    mini.addEventListener('click', () => setCollapsed(false));
+    return {
+      collapse() {
+        setCollapsed(true);
+      },
+      expand() {
+        setCollapsed(false);
+      },
+      isCollapsed() {
+        return !!store.get('collapsed', false);
+      },
+      mini
+    };
   }
 
-  // Drag the mini pill
-  (function makeMiniDraggable() {
-    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-    function onDown(e) {
-      if (e.type === 'mousedown' && e.button !== 0) return;
-      const pt = e.touches ? e.touches[0] : e;
-      const r = mini.getBoundingClientRect();
-      dragging = true; sx = pt.clientX; sy = pt.clientY; ox = r.left; oy = r.top;
-      mini.style.right = 'auto';
-      e.preventDefault();
-    }
-    function onMove(e) {
-      if (!dragging) return;
-      const pt = e.touches ? e.touches[0] : e;
-      const dx = pt.clientX - sx, dy = pt.clientY - sy;
-      const left = clamp(ox + dx, 8, window.innerWidth  - mini.offsetWidth  - 8);
-      const top  = clamp(oy + dy, 8, window.innerHeight - mini.offsetHeight - 8);
-      mini.style.left = left + 'px';
-      mini.style.top  = top  + 'px';
-    }
-    function onUp() {
-      if (!dragging) return;
-      dragging = false;
-      try {
-        const r = mini.getBoundingClientRect();
-        store.set('miniPos', { left: Math.round(r.left), top: Math.round(r.top) });
-      } catch {}
-    }
-    mini.addEventListener('mousedown', onDown);
-    mini.addEventListener('touchstart', onDown, { passive: false });
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('touchmove', onMove, { passive: false });
-    window.addEventListener('mouseup', onUp);
-    window.addEventListener('touchend', onUp);
-  })();
+  KOTN.ui.makeCollapsible = makeCollapsible;
 
-  // Click actions
-  btn.addEventListener('click', () => setCollapsed(true));
-  mini.addEventListener('click', () => setCollapsed(false));
-
-  return {
-    collapse() { setCollapsed(true); },
-    expand()   { setCollapsed(false); },
-    isCollapsed() { return !!store.get('collapsed', false); },
-    mini
-  };
-}
-
-KOTN.ui.makeCollapsible = makeCollapsible;
-
-  // ---------------------------------------------------------------------------
-  // CSV + download helpers
-  // ---------------------------------------------------------------------------
   function escapeCell(value) {
     if (value == null) return '';
     const str = String(value);
     if (/[",\n\r]/.test(str)) {
-      return `"${str.replace(/"/g, '""')}"`;
+      return '"' + str.replace(/"/g, '""') + '"';
     }
     return str;
   }
@@ -558,26 +518,22 @@ KOTN.ui.makeCollapsible = makeCollapsible;
     if (headers && headers.length) {
       lines.push(headers.map(escapeCell).join(','));
     }
-
-    rows.forEach((row) => {
+    rows.forEach(row => {
       if (Array.isArray(row)) {
         lines.push(row.map(escapeCell).join(','));
       } else if (row && typeof row === 'object') {
         const keys = headers || Object.keys(row);
-        const line = keys.map((key) => escapeCell(row[key]));
+        const line = keys.map(key => escapeCell(row[key]));
         lines.push(line.join(','));
       } else {
         lines.push(escapeCell(row));
       }
     });
-
     return lines.join('\r\n');
   }
 
   function downloadTextFile(filename, mimeType, content) {
-    const blob = new Blob([content], {
-      type: mimeType
-    });
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = dom.create('a', {
       href: url,
@@ -591,8 +547,7 @@ KOTN.ui.makeCollapsible = makeCollapsible;
 
   function downloadCSV(filename, rows, headers) {
     const csv = rowsToCSV(rows, headers);
-    // BOM to keep Excel happy
-    const content = `\uFEFF${csv}`;
+    const content = '\uFEFF' + csv;
     downloadTextFile(filename, 'text/csv;charset=utf-8;', content);
   }
 
@@ -603,17 +558,11 @@ KOTN.ui.makeCollapsible = makeCollapsible;
     downloadTextFile
   };
 
-  // ---------------------------------------------------------------------------
-  // Iframe loader / page hydration helpers
-  // ---------------------------------------------------------------------------
   async function loadInIframe(config) {
-    const {
-      url,
-      selector,
-      ready,
-      timeoutMs = 30000
-    } = config;
-
+    const url = config.url;
+    const selector = config.selector;
+    const ready = config.ready;
+    const timeoutMs = config.timeoutMs == null ? 30000 : config.timeoutMs;
     return new Promise((resolve, reject) => {
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
@@ -623,15 +572,13 @@ KOTN.ui.makeCollapsible = makeCollapsible;
       iframe.style.opacity = '0';
       iframe.style.pointerEvents = 'none';
       iframe.src = url;
-
       let done = false;
       const timeoutId = setTimeout(() => {
         if (done) return;
         done = true;
         iframe.remove();
-        reject(new Error(`loadInIframe: timeout for ${url}`));
+        reject(new Error('loadInIframe: timeout for ' + url));
       }, timeoutMs);
-
       function finish(result) {
         if (done) return;
         done = true;
@@ -639,46 +586,33 @@ KOTN.ui.makeCollapsible = makeCollapsible;
         iframe.remove();
         resolve(result);
       }
-
       iframe.addEventListener('load', () => {
         try {
           const w = iframe.contentWindow;
           const d = iframe.contentDocument;
           if (!w || !d) {
-            finish({
-              window: w,
-              document: d
-            });
+            finish({ window: w, document: d });
             return;
           }
-
           if (ready && typeof ready === 'function') {
-            Promise.resolve(ready(w, d))
-              .then((val) => finish(val))
-              .catch((err) => reject(err));
-          } else if (selector) {
-            dom
-              .waitFor(selector, {
-                root: d,
-                timeoutMs
-              })
-              .then((el) => finish({
-                window: w,
-                document: d,
-                element: el
-              }))
-              .catch((err) => reject(err));
-          } else {
-            finish({
-              window: w,
-              document: d
+            Promise.resolve(ready(w, d)).then(val => {
+              finish(val);
+            }).catch(err => {
+              reject(err);
             });
+          } else if (selector) {
+            dom.waitFor(selector, { root: d, timeoutMs }).then(el => {
+              finish({ window: w, document: d, element: el });
+            }).catch(err => {
+              reject(err);
+            });
+          } else {
+            finish({ window: w, document: d });
           }
         } catch (err) {
           reject(err);
         }
       });
-
       document.body.appendChild(iframe);
     });
   }
@@ -687,35 +621,27 @@ KOTN.ui.makeCollapsible = makeCollapsible;
     loadInIframe
   };
 
-  // ---------------------------------------------------------------------------
-  // Staff / dropdown parsing helpers
-  // ---------------------------------------------------------------------------
   function parseStaffDropdown(selectEl) {
     if (!selectEl) return [];
     const options = Array.from(selectEl.querySelectorAll('option'));
-    return options
-      .map((opt) => {
-        const value = (opt.value || '').trim();
-        if (!value || Number.isNaN(Number(value))) return null;
-        const id = Number(value);
-        const label = dom.norm(opt.textContent);
-        return {
-          id,
-          label,
-          selected: opt.selected,
-          disabled: opt.disabled
-        };
-      })
-      .filter(Boolean);
+    return options.map(opt => {
+      const value = (opt.value || '').trim();
+      if (!value || Number.isNaN(Number(value))) return null;
+      const id = Number(value);
+      const label = dom.norm(opt.textContent);
+      return {
+        id,
+        label,
+        selected: opt.selected,
+        disabled: opt.disabled
+      };
+    }).filter(Boolean);
   }
 
   KOTN.staff = {
     parseStaffDropdown
   };
 
-  // ---------------------------------------------------------------------------
-  // HTTP / CSRF helpers
-  // ---------------------------------------------------------------------------
   function getCSRFToken() {
     const meta = document.querySelector('meta[name="csrf-token"]');
     if (meta && meta.content) return meta.content;
@@ -725,9 +651,7 @@ KOTN.ui.makeCollapsible = makeCollapsible;
   }
 
   async function csrfFetch(input, init = {}) {
-    const options = {
-      ...init
-    };
+    const options = Object.assign({}, init);
     const headers = new Headers(options.headers || {});
     const csrf = getCSRFToken();
     if (csrf && !headers.has('X-CSRF-TOKEN')) {
@@ -737,10 +661,9 @@ KOTN.ui.makeCollapsible = makeCollapsible;
       headers.set('X-Requested-With', 'XMLHttpRequest');
     }
     options.headers = headers;
-
     const res = await fetch(input, options);
     if (!res.ok) {
-      throw new Error(`csrfFetch: HTTP ${res.status} for ${input}`);
+      throw new Error('csrfFetch: HTTP ' + res.status + ' for ' + input);
     }
     return res;
   }
@@ -756,40 +679,30 @@ KOTN.ui.makeCollapsible = makeCollapsible;
     fetchJSON
   };
 
-  // ---------------------------------------------------------------------------
-  // Mutation observer helpers
-  // ---------------------------------------------------------------------------
   function onAdded(config) {
-    const {
-      root = document,
-      selector,
-      callback,
-      debounceMs = 0
-    } = config;
-
+    const root = config.root || document;
+    const selector = config.selector;
+    const callback = config.callback;
+    const debounceMs = config.debounceMs == null ? 0 : config.debounceMs;
     if (!selector || typeof callback !== 'function') {
       throw new Error('onAdded requires selector and callback');
     }
-
     const seen = new WeakSet();
     let queued = [];
     let timer = null;
-
     function flush() {
       if (!queued.length) return;
       const batch = queued;
       queued = [];
       timer = null;
-      batch.forEach((el) => {
+      batch.forEach(el => {
         try {
           callback(el);
         } catch (err) {
-          // eslint-disable-next-line no-console
           console.error('[KOTN observer] callback error', err);
         }
       });
     }
-
     function enqueue(el) {
       if (seen.has(el)) return;
       seen.add(el);
@@ -802,24 +715,20 @@ KOTN.ui.makeCollapsible = makeCollapsible;
         flush();
       }
     }
-
     dom.qsa(selector, root).forEach(enqueue);
-
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((m) => {
-        m.addedNodes.forEach((node) => {
+    const observer = new MutationObserver(mutations => {
+      mutations.forEach(m => {
+        m.addedNodes.forEach(node => {
           if (!(node instanceof Element)) return;
           if (node.matches(selector)) enqueue(node);
           dom.qsa(selector, node).forEach(enqueue);
         });
       });
     });
-
     observer.observe(root, {
       childList: true,
       subtree: true
     });
-
     return () => observer.disconnect();
   }
 
@@ -827,22 +736,52 @@ KOTN.ui.makeCollapsible = makeCollapsible;
     onAdded
   };
 
-  // ---------------------------------------------------------------------------
-  // Logging helper (thin wrapper; keeps your old patterns consistent)
-  // ---------------------------------------------------------------------------
+  function toInt(value, defaultValue) {
+    if (value == null) {
+      return defaultValue == null ? 0 : defaultValue;
+    }
+    const match = String(value).match(/-?\d+/);
+    if (!match) {
+      return defaultValue == null ? 0 : defaultValue;
+    }
+    const n = parseInt(match[0], 10);
+    if (Number.isNaN(n)) {
+      return defaultValue == null ? 0 : defaultValue;
+    }
+    return n;
+  }
+
+  function ordinal(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      return '';
+    }
+    const abs = Math.abs(n);
+    const v = abs % 100;
+    if (v >= 11 && v <= 13) {
+      return n + 'th';
+    }
+    const r = abs % 10;
+    if (r === 1) return n + 'st';
+    if (r === 2) return n + 'nd';
+    if (r === 3) return n + 'rd';
+    return n + 'th';
+  }
+
+  KOTN.num = {
+    toInt,
+    ordinal
+  };
+
   function log(label, payload) {
     const ts = new Date().toISOString();
     if (payload !== undefined) {
-      // eslint-disable-next-line no-console
-      console.log(`[KOTN ${ts}] ${label}`, payload);
+      console.log('[KOTN ' + ts + '] ' + label, payload);
     } else {
-      // eslint-disable-next-line no-console
-      console.log(`[KOTN ${ts}] ${label}`);
+      console.log('[KOTN ' + ts + '] ' + label);
     }
   }
 
   KOTN.log = log;
 
 })();
-
-
