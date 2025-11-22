@@ -1,10 +1,14 @@
 // KOTN Core Utilities
-// v0.2.0
+// v0.3.0
 
 (function() {
   'use strict';
 
   const KOTN = (window.KOTN = window.KOTN || {});
+
+  // ============================================================
+  // DOM Utilities
+  // ============================================================
 
   const dom = {
     qs(selector, root = document) {
@@ -76,6 +80,10 @@
 
   KOTN.dom = dom;
 
+  // ============================================================
+  // Async Utilities
+  // ============================================================
+
   const asyncUtils = {
     sleep(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
@@ -134,6 +142,10 @@
   };
 
   KOTN.async = asyncUtils;
+
+  // ============================================================
+  // State
+  // ============================================================
 
   function makeStorageDriver(scope) {
     if (scope === 'session') {
@@ -226,6 +238,10 @@
     createStore
   };
 
+  // ============================================================
+  // UI: Panels and Mini-Pills
+  // ============================================================
+
   function createPanel(options) {
     const id = options.id;
     const title = options.title || 'KOTN';
@@ -257,7 +273,7 @@
         cursor: 'move',
         padding: '4px 8px',
         background: '#222',
-        borderBottom: '1px solid #333',
+        borderBottom: '1px solid '#333',
         fontWeight: '600',
         display: 'flex',
         alignItems: 'center',
@@ -504,6 +520,10 @@
 
   KOTN.ui.makeCollapsible = makeCollapsible;
 
+  // ============================================================
+  // CSV Helpers
+  // ============================================================
+
   function escapeCell(value) {
     if (value == null) return '';
     const str = String(value);
@@ -557,6 +577,10 @@
     downloadCSV,
     downloadTextFile
   };
+
+  // ============================================================
+  // Page Helpers
+  // ============================================================
 
   async function loadInIframe(config) {
     const url = config.url;
@@ -621,6 +645,10 @@
     loadInIframe
   };
 
+  // ============================================================
+  // Staff Helpers
+  // ============================================================
+
   function parseStaffDropdown(selectEl) {
     if (!selectEl) return [];
     const options = Array.from(selectEl.querySelectorAll('option'));
@@ -641,6 +669,10 @@
   KOTN.staff = {
     parseStaffDropdown
   };
+
+  // ============================================================
+  // HTTP Helpers
+  // ============================================================
 
   function getCSRFToken() {
     const meta = document.querySelector('meta[name="csrf-token"]');
@@ -678,6 +710,10 @@
     csrfFetch,
     fetchJSON
   };
+
+  // ============================================================
+  // Mutation Observer Helpers
+  // ============================================================
 
   function onAdded(config) {
     const root = config.root || document;
@@ -736,6 +772,10 @@
     onAdded
   };
 
+  // ============================================================
+  // Numeric Helpers
+  // ============================================================
+
   function toInt(value, defaultValue) {
     if (value == null) {
       return defaultValue == null ? 0 : defaultValue;
@@ -773,6 +813,10 @@
     ordinal
   };
 
+  // ============================================================
+  // Logging
+  // ============================================================
+
   function log(label, payload) {
     const ts = new Date().toISOString();
     if (payload !== undefined) {
@@ -783,5 +827,180 @@
   }
 
   KOTN.log = log;
+
+  // ============================================================
+  // Shelf Helpers
+  // ============================================================
+
+  function normalizeShelfName(name) {
+    return dom.norm(name || '').toUpperCase();
+  }
+
+  function parseShelfName(name) {
+    const full = dom.norm(name || '');
+    const m = full.match(/^([A-Za-z]+)(\d+)([A-Za-z]+)?$/);
+    if (!m) {
+      return {
+        full,
+        prefix: '',
+        number: null,
+        digits: '',
+        suffix: ''
+      };
+    }
+    const digits = m[2];
+    const n = parseInt(digits, 10);
+    return {
+      full,
+      prefix: m[1],
+      number: Number.isFinite(n) ? n : null,
+      digits,
+      suffix: m[3] || ''
+    };
+  }
+
+  function buildShelfIndexFromArray(arr) {
+    const map = new Map();
+    if (!Array.isArray(arr)) return map;
+    arr.forEach(o => {
+      if (!o || typeof o !== 'object') return;
+      const id = o.id != null ? o.id : (o.shelf_id != null ? o.shelf_id : o.ID);
+      const name = o.name || o.label || o.shelf || o.shelf_label || o.title;
+      if (id == null || !name) return;
+      const key = normalizeShelfName(name);
+      if (!key) return;
+      map.set(key, String(id));
+    });
+    return map;
+  }
+
+  let shelfIndexCache = null;
+
+  async function loadShelfIndex(options = {}) {
+    const url = options.url || '/management/shelves/get-index-data?order_by=name';
+    const force = !!options.force;
+    if (shelfIndexCache && !force) {
+      return shelfIndexCache;
+    }
+    let json;
+    try {
+      json = await fetchJSON(url, {
+        method: 'GET',
+        credentials: 'same-origin'
+      });
+    } catch (err) {
+      console.warn('[KOTN shelves] loadShelfIndex failed', err);
+      json = null;
+    }
+    let arr;
+    if (Array.isArray(json)) {
+      arr = json;
+    } else if (json && (json.shelves || json.rows || json.data || json.items)) {
+      arr = json.shelves || json.rows || json.data || json.items;
+    } else {
+      arr = [];
+    }
+    const index = buildShelfIndexFromArray(arr);
+    shelfIndexCache = { items: arr, index };
+    return shelfIndexCache;
+  }
+
+  function getShelfIdByName(source, name) {
+    const key = normalizeShelfName(name);
+    const map = source instanceof Map ? source : (source && source.index instanceof Map ? source.index : null);
+    if (!map) return null;
+    const value = map.get(key);
+    return value == null ? null : String(value);
+  }
+
+  async function patchShelf(id, body) {
+    if (id == null) {
+      throw new Error('patchShelf requires id');
+    }
+    const url = '/management/shelves/' + encodeURIComponent(String(id));
+    const init = {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json;charset=UTF-8'
+      },
+      body: JSON.stringify(body || {})
+    };
+    return csrfFetch(url, init);
+  }
+
+  async function assignShelfTeam(id, teamCode) {
+    return patchShelf(id, { team_assigned: teamCode });
+  }
+
+  async function clearShelfTeam(id) {
+    return patchShelf(id, { team_assigned: null });
+  }
+
+  async function assignShelfStaff(id, staffId) {
+    const url = '/management/shelves/' + encodeURIComponent(String(id)) + '/assign/' + encodeURIComponent(String(staffId));
+    return csrfFetch(url, {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+  }
+
+  async function removeShelfStaff(id, staffId) {
+    const url = '/management/shelves/' + encodeURIComponent(String(id)) + '/remove/' + encodeURIComponent(String(staffId));
+    return csrfFetch(url, {
+      method: 'POST',
+      credentials: 'same-origin'
+    });
+  }
+
+  KOTN.shelves = {
+    normalizeName: normalizeShelfName,
+    parseName: parseShelfName,
+    buildIndexFromArray: buildShelfIndexFromArray,
+    loadIndex: loadShelfIndex,
+    getIdByName: getShelfIdByName,
+    assignTeam: assignShelfTeam,
+    clearTeam: clearShelfTeam,
+    assignStaff: assignShelfStaff,
+    removeStaff: removeShelfStaff
+  };
+
+  // ============================================================
+  // Prompt Helpers
+  // ============================================================
+
+  function getScriptWindow() {
+    try {
+      return typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
+    } catch (err) {
+      return window;
+    }
+  }
+
+  function ensurePromptPatched() {
+    const w = getScriptWindow();
+    if (w.kotnArmPrompt) return;
+    const code = '(function(){var o=window.prompt,a=null;window.kotnArmPrompt=function(v){try{a=String(v);}catch(e){a=\"\";}};window.prompt=function(m,d){try{if(a!==null&&a!==undefined){var t=a;a=null;return t;}}catch(e){}return o.call(window,m,d);};})();';
+    const s = document.createElement('script');
+    s.textContent = code;
+    document.documentElement.appendChild(s);
+    s.remove();
+  }
+
+  function armPrompt(value) {
+    try {
+      ensurePromptPatched();
+      const w = getScriptWindow();
+      if (w.kotnArmPrompt) {
+        w.kotnArmPrompt(String(value));
+      }
+    } catch (err) {
+    }
+  }
+
+  KOTN.prompt = {
+    ensurePatched: ensurePromptPatched,
+    arm: armPrompt
+  };
 
 })();
