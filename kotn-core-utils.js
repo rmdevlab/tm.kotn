@@ -273,7 +273,7 @@
         cursor: 'move',
         padding: '4px 8px',
         background: '#222',
-        borderBottom: '1px solid '#333',
+        borderBottom: '1px solid #333',
         fontWeight: '600',
         display: 'flex',
         alignItems: 'center',
@@ -1004,3 +1004,4 @@
   };
 
 })();
+
