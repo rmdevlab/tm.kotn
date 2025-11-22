@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.3.0
+// v0.4.0
 
 (function() {
   'use strict';
@@ -239,7 +239,7 @@
   };
 
   // ============================================================
-  // UI: Panels and Mini-Pills
+  // UI: Panels, Mini-Pills, Tabs
   // ============================================================
 
   function createPanel(options) {
@@ -376,8 +376,67 @@
     };
   }
 
+  function injectTabButton(options) {
+    const root = options && options.root ? options.root : document;
+    const groupSelector = options && options.groupSelector ? options.groupSelector : '.filters';
+    const tabSelector = options && options.tabSelector ? options.tabSelector : 'button.tab';
+    const labelRaw = options && options.label ? options.label : '';
+    const label = dom.norm(labelRaw);
+    if (!label) {
+      throw new Error('injectTabButton requires label');
+    }
+    const matchText = options && options.matchText ? dom.norm(options.matchText).toUpperCase() : null;
+    const className = options && options.className ? options.className : null;
+    const activeClass = options && options.activeClass ? options.activeClass : 'btn-dark';
+    let group = null;
+    const groups = dom.qsa(groupSelector, root);
+    if (typeof options.findGroup === 'function') {
+      group = options.findGroup(groups, root) || null;
+    } else if (matchText) {
+      group = groups.find(g => {
+        const tabs = dom.qsa(tabSelector, g);
+        return tabs.some(btn => dom.norm(btn.textContent).toUpperCase() === matchText);
+      }) || null;
+    } else {
+      group = groups[0] || null;
+    }
+    if (!group) return null;
+    const existingTabs = dom.qsa(tabSelector, group);
+    const targetUpper = label.toUpperCase();
+    let button = existingTabs.find(btn => dom.norm(btn.textContent).toUpperCase() === targetUpper) || null;
+    if (!button) {
+      const baseClass = className || (existingTabs[0] ? existingTabs[0].className : 'btn btn-sm btn-secondary tab');
+      button = dom.create('button', {
+        type: 'button',
+        className: baseClass,
+        textContent: label
+      });
+      group.appendChild(button);
+    }
+    function activate() {
+      if (!activeClass) return;
+      const tabs = dom.qsa(tabSelector, group);
+      tabs.forEach(t => {
+        if (t === button) {
+          t.classList.add(activeClass);
+        } else {
+          t.classList.remove(activeClass);
+        }
+      });
+    }
+    return {
+      group,
+      button,
+      activate,
+      tabSelector,
+      activeClass,
+      label
+    };
+  }
+
   KOTN.ui = {
-    createPanel
+    createPanel,
+    injectTabButton
   };
 
   function makeCollapsible(config) {
@@ -1004,4 +1063,3 @@
   };
 
 })();
-
