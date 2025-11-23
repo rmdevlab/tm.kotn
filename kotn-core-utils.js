@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.4.1
+// v0.4.2
 
 (function() {
   'use strict';
@@ -1124,6 +1124,34 @@
     ensurePatched: ensurePromptPatched,
     arm: armPrompt
   };
+  
+  // ============================================================
+  // Leaderboard Helpers
+  // ============================================================
 
+  function lbExtraToBeatByPct(candidate, ahead) {
+    if (!candidate || !ahead) return null;
+    if (!candidate.rankable || !ahead.rankable) return null;
+    if (candidate.target <= 0 || ahead.target <= 0) return null;
+    const threshold = (ahead.count / ahead.target) * candidate.target;
+    const raw = Math.floor(threshold - candidate.count) + 1;
+    if (!Number.isFinite(raw)) return null;
+    return raw > 0 ? raw : 0;
+  }
+
+  function lbExtraToQualify(row, qualifyPct) {
+    if (!row || !row.rankable) return null;
+    if (row.target <= 0) return null;
+    const pct = typeof qualifyPct === 'number' && Number.isFinite(qualifyPct) ? qualifyPct : 1;
+    const required = Math.ceil(pct * row.target);
+    const need = required - row.count;
+    return need > 0 ? need : 0;
+  }
+
+  KOTN.leaderboard = {
+    extraToBeatByPct: lbExtraToBeatByPct,
+    extraToQualify: lbExtraToQualify
+  };
 })();
+
 
