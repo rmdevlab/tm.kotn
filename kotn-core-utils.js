@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.4.0
+// v0.4.1
 
 (function() {
   'use strict';
@@ -705,6 +705,69 @@
   };
 
   // ============================================================
+  // Auth Helpers
+  // ============================================================
+
+  let authProfileCache = null;
+
+  async function getAuthProfile(options = {}) {
+    if (authProfileCache && !options.force) return authProfileCache;
+    const url = options.url || '/account/dashboard';
+    const result = await loadInIframe({
+      url,
+      ready(win, doc) {
+        let id = null;
+        if (win && typeof win.authUserId === 'number') {
+          id = win.authUserId;
+        } else {
+          const idBadge = doc.querySelector('.user-badges .user-role-badge.id .value');
+          if (idBadge) {
+            const digits = (idBadge.textContent || '').replace(/[^\d]/g, '');
+            if (digits) id = Number(digits);
+          } else {
+            const mobileSpan = doc.querySelector('.user-info .username .mobile-only');
+            if (mobileSpan) {
+              const digits = (mobileSpan.textContent || '').replace(/[^\d]/g, '');
+              if (digits) id = Number(digits);
+            }
+          }
+        }
+        let username = null;
+        const usernameEl = doc.querySelector('.user-info .username');
+        if (usernameEl) {
+          let base = '';
+          const nodes = Array.from(usernameEl.childNodes || []);
+          const textNode = nodes.find(n => n.nodeType === Node.TEXT_NODE && n.textContent);
+          if (textNode && textNode.textContent) {
+            base = textNode.textContent;
+          } else {
+            base = usernameEl.textContent || '';
+          }
+          base = base.replace(/\(.*/, '');
+          username = dom.norm(base);
+        }
+        let fullname = null;
+        const fullEl = doc.querySelector('.user-info .fullname');
+        if (fullEl) {
+          fullname = dom.norm(fullEl.textContent);
+        }
+        return {
+          id,
+          username,
+          fullname
+        };
+      },
+      timeoutMs: options.timeoutMs
+    });
+    authProfileCache = result;
+    return result;
+  }
+
+  KOTN.auth = {
+    getProfile: getAuthProfile
+  };
+  
+  // ============================================================
   // Staff Helpers
   // ============================================================
 
@@ -1063,3 +1126,4 @@
   };
 
 })();
+
