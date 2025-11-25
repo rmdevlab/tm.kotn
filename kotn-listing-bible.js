@@ -1,7 +1,7 @@
 // KOTN Listing Bible
-// v0.1.0
+// v0.2.0
 
-(function() {
+(function () {
   'use strict';
 
   const KOTN = (window.KOTN = window.KOTN || {});
@@ -11,7 +11,7 @@
   // ============================================================
 
   const listingBible = {
-    version: '0.1.0',
+    version: '0.2.0',
     rules: [
       {
         id: 'title-min-length',
@@ -48,7 +48,8 @@
         where: {
           categoryEquals: ['Adult apparel & shoes']
         },
-        message: 'Adult apparel titles must include a size near the end of the title.'
+        message: 'Adult apparel titles must include a size near the end of the title.',
+        exceptions: []
       }
     ]
   };
