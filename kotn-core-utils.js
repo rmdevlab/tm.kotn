@@ -1,7 +1,7 @@
 // KOTN Core Utilities
-// v0.4.2
+// v0.4.3
 
-(function() {
+(function () {
   'use strict';
 
   const KOTN = (window.KOTN = window.KOTN || {});
@@ -766,7 +766,7 @@
   KOTN.auth = {
     getProfile: getAuthProfile
   };
-  
+
   // ============================================================
   // Staff Helpers
   // ============================================================
@@ -1124,7 +1124,189 @@
     ensurePatched: ensurePromptPatched,
     arm: armPrompt
   };
-  
+
+  // ============================================================
+  // Re-SKU Helpers
+  // ============================================================
+
+  let reskuIframe = null;
+
+  function getReskuIframe() {
+    if (reskuIframe && document.body.contains(reskuIframe)) return reskuIframe;
+    const iframe = document.createElement('iframe');
+    iframe.id = 'kotn-resku-frame';
+    iframe.style.position = 'fixed';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.left = '-9999px';
+    iframe.style.bottom = '0';
+    iframe.style.border = '0';
+    iframe.style.opacity = '0';
+    iframe.style.pointerEvents = 'none';
+    document.body.appendChild(iframe);
+    reskuIframe = iframe;
+    return iframe;
+  }
+
+  function waitForIframeLoad(iframe, url, timeoutMs) {
+    const limit = timeoutMs == null ? 15000 : timeoutMs;
+    return new Promise((resolve, reject) => {
+      let done = false;
+      function finishOk() {
+        if (done) return;
+        done = true;
+        iframe.removeEventListener('load', onLoad);
+        clearTimeout(timer);
+        resolve();
+      }
+      function finishErr(err) {
+        if (done) return;
+        done = true;
+        iframe.removeEventListener('load', onLoad);
+        clearTimeout(timer);
+        reject(err);
+      }
+      function onLoad() {
+        finishOk();
+      }
+      const timer = setTimeout(() => {
+        finishErr(new Error('resku iframe load timeout for ' + url));
+      }, limit);
+      iframe.addEventListener('load', onLoad, { once: true });
+      iframe.src = url;
+    });
+  }
+
+  function waitForIframeNextLoad(iframe, timeoutMs) {
+    const limit = timeoutMs == null ? 8000 : timeoutMs;
+    return new Promise(resolve => {
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        iframe.removeEventListener('load', finish);
+        resolve();
+      }
+      iframe.addEventListener('load', finish, { once: true });
+      setTimeout(finish, limit);
+    });
+  }
+
+  function parseSavedNewSku(doc) {
+    try {
+      const val = doc.querySelector('.sku .value');
+      const links = val ? val.querySelectorAll('a.kotn-sku-link') : null;
+      if (links && links.length) {
+        const last = links[links.length - 1];
+        return dom.norm(last.textContent || '');
+      }
+      const text = dom.norm(doc && doc.body && doc.body.textContent || '');
+      const m = text.match(/New SKU:\s*([A-Z]+\d+-\d+)/i);
+      return m ? m[1] : '';
+    } catch (err) {
+      return '';
+    }
+  }
+
+  async function reassignOneSku(listingId, targetShelf, options = {}) {
+    if (!listingId) {
+      throw new Error('reassignOneSku requires listingId');
+    }
+    const idStr = String(listingId);
+    const shelf = dom.norm(targetShelf || '');
+    if (!shelf) {
+      throw new Error('reassignOneSku requires targetShelf');
+    }
+    const iframe = getReskuIframe();
+    const loadTimeoutMs = options.loadTimeoutMs;
+    const saveTimeoutMs = options.saveTimeoutMs;
+    const url = new URL('/management/listings/' + encodeURIComponent(idStr) + '/edit', window.location.origin).toString();
+    await waitForIframeLoad(iframe, url, loadTimeoutMs);
+    const doc = iframe.contentDocument;
+    if (!doc) {
+      throw new Error('reassignOneSku iframe document unavailable');
+    }
+    const images = Array.from(doc.querySelectorAll('.image-upload-grid img[src]')).map(img => img.src).filter(Boolean);
+    const input = doc.querySelector('#shelf_name');
+    const submit = doc.getElementById('submitButton');
+    if (!input || !submit) {
+      throw new Error('reassignOneSku edit form controls not found');
+    }
+    input.focus();
+    input.value = shelf;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    const nextLoad = waitForIframeNextLoad(iframe, saveTimeoutMs);
+    submit.click();
+    await nextLoad;
+    const savedDoc = iframe.contentDocument;
+    const newSku = parseSavedNewSku(savedDoc);
+    return {
+      listingId: idStr,
+      targetShelf: shelf,
+      newSku,
+      images
+    };
+  }
+
+  async function bulkResku(listingIds, targetShelf, options = {}) {
+    const ids = Array.isArray(listingIds) ? listingIds : [];
+    const total = ids.length;
+    const shelf = dom.norm(targetShelf || '');
+    if (!shelf) {
+      throw new Error('bulkResku requires targetShelf');
+    }
+    if (!total) {
+      return {
+        ok: 0,
+        fail: 0,
+        total: 0
+      };
+    }
+    const onProgress = options.onProgress;
+    const onResult = options.onResult;
+    const loadTimeoutMs = options.loadTimeoutMs;
+    const saveTimeoutMs = options.saveTimeoutMs;
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < total; i += 1) {
+      const id = ids[i];
+      if (onProgress) {
+        try {
+          onProgress({ index: i + 1, total, id });
+        } catch (err) {
+        }
+      }
+      try {
+        const info = await reassignOneSku(id, shelf, {
+          loadTimeoutMs,
+          saveTimeoutMs
+        });
+        ok += 1;
+        if (onResult) {
+          try {
+            onResult(info);
+          } catch (err) {
+          }
+        }
+      } catch (err) {
+        fail += 1;
+        console.error('[KOTN resku] failed for listing ' + id, err);
+      }
+    }
+    return {
+      ok,
+      fail,
+      total
+    };
+  }
+
+  KOTN.resku = {
+    bulk: bulkResku,
+    reassignOne: reassignOneSku,
+    parseSavedNewSku
+  };
+
   // ============================================================
   // Leaderboard Helpers
   // ============================================================
@@ -1153,5 +1335,3 @@
     extraToQualify: lbExtraToQualify
   };
 })();
-
-
