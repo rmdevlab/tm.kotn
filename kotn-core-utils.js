@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.4.3
+// v0.5.0
 
 (function () {
   'use strict';
@@ -1300,12 +1300,120 @@
       total
     };
   }
+  
+// ============================================================
+// Re-SKU: API Queue and Helpers
+// ============================================================
+
+let _reskuQueue = Promise.resolve();
+
+function enqueueResku(task) {
+  const run = () => task().catch(err => { throw err; });
+  _reskuQueue = _reskuQueue.then(run, run);
+  return _reskuQueue;
+}
+
+async function apiUpdateShelf(listingId, targetShelf) {
+  const idStr = String(listingId);
+  const shelf = dom.norm(targetShelf || '');
+  if (!idStr || !shelf) {
+    throw new Error('apiUpdateShelf requires listingId and targetShelf');
+  }
+  return enqueueResku(async () => {
+    const payload = { shelf_name: shelf };
+    const json = await KOTN.http.fetchJSON('/management/listings/' + encodeURIComponent(idStr) + '/update-shelf', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json;charset=UTF-8'
+      },
+      body: JSON.stringify(payload)
+    });
+    const verified = await verifyNewSkuViaEdit(idStr, shelf);
+    return {
+      listingId: idStr,
+      targetShelf: shelf,
+      newSku: verified.newSku,
+      images: verified.images
+    };
+  });
+}
+
+async function verifyNewSkuViaEdit(listingId, shelf) {
+  const idStr = String(listingId);
+  const url = '/management/listings/' + encodeURIComponent(idStr) + '/edit';
+  const frame = await KOTN.page.loadInIframe({
+    url,
+    selector: '#shelf_name',
+    timeoutMs: 15000
+  });
+  const doc = frame.document;
+  const newSku = parseSavedNewSku(doc) || '';
+  const images = Array.from(doc.querySelectorAll('.image-upload-grid img[src]')).map(img => img.src).filter(Boolean);
+  return {
+    listingId: idStr,
+    targetShelf: shelf,
+    newSku,
+    images
+  };
+}
+
+async function bulkReskuViaApi(listingIds, targetShelf, options = {}) {
+  const ids = Array.isArray(listingIds) ? listingIds : [];
+  const shelf = dom.norm(targetShelf || '');
+  const total = ids.length;
+  if (!shelf) {
+    throw new Error('bulkReskuViaApi requires targetShelf');
+  }
+  if (!total) {
+    return {
+      ok: 0,
+      fail: 0,
+      total: 0
+    };
+  }
+  const onProgress = options.onProgress;
+  const onResult = options.onResult;
+  let ok = 0;
+  let fail = 0;
+  for (let i = 0; i < total; i += 1) {
+    const id = ids[i];
+    if (onProgress) {
+      try {
+        onProgress({ index: i + 1, total, id });
+      } catch (err) {
+      }
+    }
+    try {
+      const info = await apiUpdateShelf(id, shelf);
+      ok += 1;
+      if (onResult) {
+        try {
+          onResult(info);
+        } catch (err) {
+        }
+      }
+    } catch (err) {
+      fail += 1;
+      console.error('[KOTN resku api] failed for listing ' + id, err);
+    }
+  }
+  return {
+    ok,
+    fail,
+    total
+  };
+}
 
   KOTN.resku = {
-    bulk: bulkResku,
-    reassignOne: reassignOneSku,
-    parseSavedNewSku
-  };
+  bulk: bulkResku,
+  bulkViaApi: bulkReskuViaApi,
+  updateShelfViaApi: apiUpdateShelf,
+  verifyViaEdit: verifyNewSkuViaEdit,
+  reassignOne: reassignOneSku,
+  parseSavedNewSku
+};
+
 
   // ============================================================
   // Leaderboard Helpers
@@ -1335,3 +1443,4 @@
     extraToQualify: lbExtraToQualify
   };
 })();
+
