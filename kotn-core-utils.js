@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.5.0
+// v0.6.0
 
 (function () {
   'use strict';
@@ -578,6 +578,59 @@
   }
 
   KOTN.ui.makeCollapsible = makeCollapsible;
+
+  // ============================================================
+  // UI: Activity Log
+  // ============================================================
+
+  function createActivityLog(options = {}) {
+    const id = options.id || null;
+    const className = options.className || 'kotn-activity-log';
+    const maxEntries = typeof options.maxEntries === 'number' && options.maxEntries > 0 ? options.maxEntries : 500;
+    const store = id ? createStore({ name: 'activity-log:' + id, scope: 'local' }) : null;
+    const box = dom.create('div', {
+      className
+    });
+    function readStoredLines() {
+      if (!store) return [];
+      const raw = store.get('lines', []);
+      return Array.isArray(raw) ? raw.slice() : [];
+    }
+    function writeStoredLines(lines) {
+      if (!store) return;
+      store.set('lines', lines.slice());
+    }
+    function render(lines) {
+      box.textContent = lines.join('\n');
+      box.scrollTop = box.scrollHeight;
+    }
+    let lines = readStoredLines();
+    if (lines.length) {
+      render(lines);
+    }
+    function append(text) {
+      const ts = new Date().toISOString();
+      const line = '[' + ts + '] ' + text;
+      lines.push(line);
+      if (lines.length > maxEntries) {
+        lines = lines.slice(lines.length - maxEntries);
+      }
+      writeStoredLines(lines);
+      render(lines);
+    }
+    function clear() {
+      lines = [];
+      writeStoredLines(lines);
+      render(lines);
+    }
+    return {
+      box,
+      log: append,
+      clear
+    };
+  }
+
+  KOTN.ui.createActivityLog = createActivityLog;
 
   // ============================================================
   // CSV Helpers
@@ -1300,120 +1353,118 @@
       total
     };
   }
-  
-// ============================================================
-// Re-SKU: API Queue and Helpers
-// ============================================================
 
-let _reskuQueue = Promise.resolve();
+  let _reskuQueue = Promise.resolve();
 
-function enqueueResku(task) {
-  const run = () => task().catch(err => { throw err; });
-  _reskuQueue = _reskuQueue.then(run, run);
-  return _reskuQueue;
-}
-
-async function apiUpdateShelf(listingId, targetShelf) {
-  const idStr = String(listingId);
-  const shelf = dom.norm(targetShelf || '');
-  if (!idStr || !shelf) {
-    throw new Error('apiUpdateShelf requires listingId and targetShelf');
-  }
-  return enqueueResku(async () => {
-    const payload = { shelf_name: shelf };
-    const json = await KOTN.http.fetchJSON('/management/listings/' + encodeURIComponent(idStr) + '/update-shelf', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        'Content-Type': 'application/json;charset=UTF-8'
-      },
-      body: JSON.stringify(payload)
+  function enqueueResku(task) {
+    const run = () => task().catch(err => {
+      throw err;
     });
-    const verified = await verifyNewSkuViaEdit(idStr, shelf);
+    _reskuQueue = _reskuQueue.then(run, run);
+    return _reskuQueue;
+  }
+
+  async function apiUpdateShelf(listingId, targetShelf) {
+    const idStr = String(listingId);
+    const shelf = dom.norm(targetShelf || '');
+    if (!idStr || !shelf) {
+      throw new Error('apiUpdateShelf requires listingId and targetShelf');
+    }
+    return enqueueResku(async () => {
+      const payload = { shelf_name: shelf };
+      const json = await KOTN.http.fetchJSON('/management/listings/' + encodeURIComponent(idStr) + '/update-shelf', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json;charset=UTF-8'
+        },
+        body: JSON.stringify(payload)
+      });
+      const verified = await verifyNewSkuViaEdit(idStr, shelf);
+      return {
+        listingId: idStr,
+        targetShelf: shelf,
+        newSku: verified.newSku,
+        images: verified.images,
+        apiResponse: json
+      };
+    });
+  }
+
+  async function verifyNewSkuViaEdit(listingId, shelf) {
+    const idStr = String(listingId);
+    const url = '/management/listings/' + encodeURIComponent(idStr) + '/edit';
+    const frame = await KOTN.page.loadInIframe({
+      url,
+      selector: '#shelf_name',
+      timeoutMs: 15000
+    });
+    const doc = frame.document;
+    const newSku = parseSavedNewSku(doc) || '';
+    const images = Array.from(doc.querySelectorAll('.image-upload-grid img[src]')).map(img => img.src).filter(Boolean);
     return {
       listingId: idStr,
       targetShelf: shelf,
-      newSku: verified.newSku,
-      images: verified.images
-    };
-  });
-}
-
-async function verifyNewSkuViaEdit(listingId, shelf) {
-  const idStr = String(listingId);
-  const url = '/management/listings/' + encodeURIComponent(idStr) + '/edit';
-  const frame = await KOTN.page.loadInIframe({
-    url,
-    selector: '#shelf_name',
-    timeoutMs: 15000
-  });
-  const doc = frame.document;
-  const newSku = parseSavedNewSku(doc) || '';
-  const images = Array.from(doc.querySelectorAll('.image-upload-grid img[src]')).map(img => img.src).filter(Boolean);
-  return {
-    listingId: idStr,
-    targetShelf: shelf,
-    newSku,
-    images
-  };
-}
-
-async function bulkReskuViaApi(listingIds, targetShelf, options = {}) {
-  const ids = Array.isArray(listingIds) ? listingIds : [];
-  const shelf = dom.norm(targetShelf || '');
-  const total = ids.length;
-  if (!shelf) {
-    throw new Error('bulkReskuViaApi requires targetShelf');
-  }
-  if (!total) {
-    return {
-      ok: 0,
-      fail: 0,
-      total: 0
+      newSku,
+      images
     };
   }
-  const onProgress = options.onProgress;
-  const onResult = options.onResult;
-  let ok = 0;
-  let fail = 0;
-  for (let i = 0; i < total; i += 1) {
-    const id = ids[i];
-    if (onProgress) {
-      try {
-        onProgress({ index: i + 1, total, id });
-      } catch (err) {
-      }
+
+  async function bulkReskuViaApi(listingIds, targetShelf, options = {}) {
+    const ids = Array.isArray(listingIds) ? listingIds : [];
+    const shelf = dom.norm(targetShelf || '');
+    const total = ids.length;
+    if (!shelf) {
+      throw new Error('bulkReskuViaApi requires targetShelf');
     }
-    try {
-      const info = await apiUpdateShelf(id, shelf);
-      ok += 1;
-      if (onResult) {
+    if (!total) {
+      return {
+        ok: 0,
+        fail: 0,
+        total: 0
+      };
+    }
+    const onProgress = options.onProgress;
+    const onResult = options.onResult;
+    let ok = 0;
+    let fail = 0;
+    for (let i = 0; i < total; i += 1) {
+      const id = ids[i];
+      if (onProgress) {
         try {
-          onResult(info);
+          onProgress({ index: i + 1, total, id });
         } catch (err) {
         }
       }
-    } catch (err) {
-      fail += 1;
-      console.error('[KOTN resku api] failed for listing ' + id, err);
+      try {
+        const info = await apiUpdateShelf(id, shelf);
+        ok += 1;
+        if (onResult) {
+          try {
+            onResult(info);
+          } catch (err) {
+          }
+        }
+      } catch (err) {
+        fail += 1;
+        console.error('[KOTN resku api] failed for listing ' + id, err);
+      }
     }
+    return {
+      ok,
+      fail,
+      total
+    };
   }
-  return {
-    ok,
-    fail,
-    total
-  };
-}
 
   KOTN.resku = {
-  bulk: bulkResku,
-  bulkViaApi: bulkReskuViaApi,
-  updateShelfViaApi: apiUpdateShelf,
-  verifyViaEdit: verifyNewSkuViaEdit,
-  reassignOne: reassignOneSku,
-  parseSavedNewSku
-};
-
+    bulk: bulkResku,
+    bulkViaApi: bulkReskuViaApi,
+    updateShelfViaApi: apiUpdateShelf,
+    verifyViaEdit: verifyNewSkuViaEdit,
+    reassignOne: reassignOneSku,
+    parseSavedNewSku
+  };
 
   // ============================================================
   // Leaderboard Helpers
@@ -1443,4 +1494,3 @@ async function bulkReskuViaApi(listingIds, targetShelf, options = {}) {
     extraToQualify: lbExtraToQualify
   };
 })();
-
