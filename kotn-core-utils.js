@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.6.0
+// v0.8.0
 
 (function () {
   'use strict';
@@ -1467,6 +1467,40 @@
   };
 
   // ============================================================
+  // Lister Stats Helpers
+  // ============================================================
+
+  function findListerDomRows() {
+    const tiles=dom.qsa('.lister-stats-tile');
+    const rows=[];
+    tiles.forEach(tile=>{
+      const nameLink=tile.querySelector('.lister a[href*="/management/users/"]');
+      if(!nameLink) return;
+      const rawName=dom.norm(nameLink.textContent||'');
+      if(!rawName) return;
+      const lowerName=rawName.toLowerCase();
+      if(lowerName.includes('team')) return;
+      const href=String(nameLink.getAttribute('href')||'');
+      const m=href.match(/\/management\/users\/(\d+)/);
+      if(!m) return;
+      const staffId=Number(m[1]);
+      if(!Number.isFinite(staffId)) return;
+      const badgeEl=tile.querySelector('.lister .badge');
+      const teamBadge=badgeEl?dom.norm(badgeEl.textContent||''):'';
+      rows.push({
+        tile,
+        staffId,
+        name:rawName,
+        teamBadge
+      });
+    });
+    return rows;
+  }
+
+  KOTN.listers=KOTN.listers||{};
+  KOTN.listers.findDomRows=findListerDomRows;
+
+  // ============================================================
   // Leaderboard Helpers
   // ============================================================
 
@@ -1494,3 +1528,4 @@
     extraToQualify: lbExtraToQualify
   };
 })();
+
