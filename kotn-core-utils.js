@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.8.0
+// v0.9.0
 
 (function () {
   'use strict';
@@ -1527,5 +1527,205 @@
     extraToBeatByPct: lbExtraToBeatByPct,
     extraToQualify: lbExtraToQualify
   };
+
+  // ============================================================
+  // Listing Parser Helpers
+  // ============================================================
+
+  function extractListingFromEdit(doc, id, options) {
+    const cfg = options || {};
+    const domRef = KOTN.dom;
+    const data = {
+      id: String(id),
+      title: '',
+      primaryCategory: '',
+      secondaryCategory: '',
+      categoryIdsJson: '',
+      auctionId: '',
+      auctionType: '',
+      shelfName: '',
+      lot: '',
+      pickingChannel: '',
+      productUrl: '',
+      itemConditionId: '',
+      packageConditionId: '',
+      itemConditionLabel: '',
+      packageConditionLabel: '',
+      macroNotes: '',
+      conditionNotes: '',
+      editorNotes: '',
+      staffNotes: '',
+      createdBy: '',
+      createdByRaw: '',
+      createdAtText: '',
+      isDraft: false,
+      toBeCleared: false,
+      isPublic: false,
+      imageCount: 0
+    };
+    const createdRow = doc.querySelector('.form-group.row span.col-form-label');
+    if (createdRow && createdRow.textContent && domRef.norm(createdRow.textContent).toLowerCase() === 'created by') {
+      const input = createdRow.parentElement && createdRow.parentElement.querySelector('.input-group input[disabled][type="text"]');
+      if (input && input.value) {
+        data.createdBy = input.value;
+        data.createdByRaw = input.value;
+      }
+    }
+    const auctionHiddenId = doc.querySelector('input[name="auction_id"]');
+    if (auctionHiddenId && auctionHiddenId.value) {
+      data.auctionId = String(auctionHiddenId.value);
+    }
+    const auctionTypeInput = doc.querySelector('#auctionType');
+    if (auctionTypeInput && auctionTypeInput.value) {
+      data.auctionType = String(auctionTypeInput.value);
+    }
+    const shelfInput = doc.querySelector('input[name="shelf_name"]');
+    if (shelfInput && shelfInput.value) {
+      data.shelfName = shelfInput.value;
+    }
+    const lotSelect = doc.querySelector('select[name="lot"]');
+    if (lotSelect && lotSelect.value) {
+      data.lot = lotSelect.value;
+    }
+    const channelFront = doc.querySelector('input[name="picking_channel"][value="front"]');
+    const channelBack = doc.querySelector('input[name="picking_channel"][value="back"]');
+    if (channelFront && channelFront.checked) {
+      data.pickingChannel = 'front';
+    } else if (channelBack && channelBack.checked) {
+      data.pickingChannel = 'back';
+    }
+    const urlInput = doc.querySelector('input[name="url"]');
+    if (urlInput && urlInput.value) {
+      data.productUrl = urlInput.value;
+    }
+    const cat1Button = doc.querySelector('.cat-1-button');
+    if (cat1Button && cat1Button.textContent) {
+      data.primaryCategory = domRef.norm(cat1Button.textContent);
+    }
+    const cat2Button = doc.querySelector('.cat-2-button');
+    if (cat2Button && cat2Button.textContent) {
+      data.secondaryCategory = domRef.norm(cat2Button.textContent);
+    }
+    const catIdsHidden = doc.querySelector('#categoryIdsJson');
+    if (catIdsHidden && catIdsHidden.value) {
+      data.categoryIdsJson = catIdsHidden.value;
+    }
+    const titleInput = doc.querySelector('input[name="title"]');
+    if (titleInput && titleInput.value) {
+      data.title = titleInput.value;
+    }
+    const itemCondSelect = doc.querySelector('select[name="item_condition_id"]');
+    if (itemCondSelect) {
+      data.itemConditionId = itemCondSelect.value || '';
+      const sel = itemCondSelect.options[itemCondSelect.selectedIndex];
+      if (sel && sel.textContent) {
+        data.itemConditionLabel = domRef.norm(sel.textContent);
+      }
+    }
+    const pkgCondSelect = doc.querySelector('select[name="package_condition_id"]');
+    if (pkgCondSelect) {
+      data.packageConditionId = pkgCondSelect.value || '';
+      const sel = pkgCondSelect.options[pkgCondSelect.selectedIndex];
+      if (sel && sel.textContent) {
+        data.packageConditionLabel = domRef.norm(sel.textContent);
+      }
+    }
+    const macroNotesTextarea = doc.querySelector('textarea[name="macro_notes"]');
+    if (macroNotesTextarea && macroNotesTextarea.value) {
+      data.macroNotes = macroNotesTextarea.value;
+    }
+    const conditionNotesTextarea = doc.querySelector('textarea[name="condition_notes"]');
+    if (conditionNotesTextarea && conditionNotesTextarea.value) {
+      data.conditionNotes = conditionNotesTextarea.value;
+    }
+    const editorNotesTextarea = doc.querySelector('textarea[name="notes"]');
+    if (editorNotesTextarea && editorNotesTextarea.value) {
+      data.editorNotes = editorNotesTextarea.value;
+    }
+    const staffNotesTextarea = doc.querySelector('textarea[name="staff_notes"]');
+    if (staffNotesTextarea && staffNotesTextarea.value) {
+      data.staffNotes = staffNotesTextarea.value;
+    }
+    const imageCountInput = doc.querySelector('#imageCount');
+    if (imageCountInput && imageCountInput.value) {
+      const n = parseInt(String(imageCountInput.value), 10);
+      data.imageCount = Number.isFinite(n) ? n : 0;
+    }
+    const draftCheckbox = doc.querySelector('input[name="is_draft"]');
+    if (draftCheckbox) {
+      data.isDraft = !!draftCheckbox.checked;
+    }
+    const toBeClearedCheckbox = doc.querySelector('input[name="to_be_cleared"]');
+    if (toBeClearedCheckbox) {
+      data.toBeCleared = !!toBeClearedCheckbox.checked;
+    }
+    const isPublicCheckbox = doc.querySelector('input[name="is_public"]');
+    if (isPublicCheckbox) {
+      data.isPublic = !!isPublicCheckbox.checked;
+    }
+    return data;
+  }
+
+  async function loadListingFromEdit(id, options) {
+    const cfg = options || {};
+    const baseUrl = cfg.baseUrl || '/management/listings/';
+    const url = baseUrl + encodeURIComponent(String(id)) + '/edit';
+    const timeoutMs = cfg.timeoutMs == null ? 30000 : cfg.timeoutMs;
+    const result = await KOTN.page.loadInIframe({
+      url,
+      ready(win, doc) {
+        return extractListingFromEdit(doc, id, cfg);
+      },
+      timeoutMs
+    });
+    return result;
+  }
+
+  async function collectListingIdsFromIndex(url, options) {
+    const cfg = options || {};
+    const timeoutMs = cfg.timeoutMs == null ? 30000 : cfg.timeoutMs;
+    const selector = cfg.selector || '.tile .id a[href*="/management/listings/lookup?id="]';
+    const pattern = cfg.pattern || /lookup\?id=(\d+)/i;
+    const result = await KOTN.page.loadInIframe({
+      url,
+      ready(win, doc) {
+        return KOTN.dom.waitFor(selector, {
+          root: doc,
+          timeoutMs: timeoutMs
+        }).then(function () {
+          const links = doc.querySelectorAll(selector);
+          const list = [];
+          links.forEach(function (a) {
+            const href = a.getAttribute('href') || '';
+            const m = href.match(pattern);
+            if (m && m[1]) {
+              list.push(m[1]);
+            }
+          });
+          return list;
+        }).catch(function () {
+          const links = doc.querySelectorAll('a[href*="/management/listings/lookup?id="]');
+          const fallback = [];
+          links.forEach(function (a) {
+            const href = a.getAttribute('href') || '';
+            const m = href.match(pattern);
+            if (m && m[1]) {
+              fallback.push(m[1]);
+            }
+          });
+          return fallback;
+        });
+      },
+      timeoutMs
+    });
+    return Array.isArray(result) ? result : [];
+  }
+
+  KOTN.listings = {
+    extractFromEdit: extractListingFromEdit,
+    loadFromEdit: loadListingFromEdit,
+    collectIdsFromIndex: collectListingIdsFromIndex
+  };
 })();
+
 
