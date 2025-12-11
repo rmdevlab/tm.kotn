@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.9.0
+// v0.9.1
 
 (function () {
   'use strict';
@@ -79,6 +79,66 @@
   };
 
   KOTN.dom = dom;
+
+  // ============================================================
+  // Search / Token Utilities
+  // ============================================================
+
+  const search = {
+    normalize(text) {
+      return dom.norm(text || '').toLowerCase();
+    },
+    toTokens(query) {
+      const normalized = search.normalize(query || '');
+      if (!normalized) {
+        return [];
+      }
+      return normalized.split(' ').filter(Boolean);
+    },
+    buildKey(text) {
+      return search.normalize(text || '');
+    },
+    matchesTokens(haystack, tokensOrQuery) {
+      const key = search.buildKey(haystack || '');
+      const tokens = Array.isArray(tokensOrQuery)
+        ? tokensOrQuery
+        : search.toTokens(tokensOrQuery);
+
+      if (!tokens.length) {
+        return true;
+      }
+      return tokens.every(t => key.includes(t));
+    },
+    highlightTokens(label, tokensOrQuery, options) {
+      const text = label == null ? '' : String(label);
+      const tokens = Array.isArray(tokensOrQuery)
+        ? tokensOrQuery
+        : search.toTokens(tokensOrQuery);
+
+      if (!tokens.length) {
+        return text;
+      }
+      const uniqTokens = Array.from(new Set(tokens.filter(Boolean)));
+      if (!uniqTokens.length) {
+        return text;
+      }
+
+      const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pat = uniqTokens.map(esc).join('|');
+      if (!pat) {
+        return text;
+      }
+
+      const re = new RegExp('(' + pat + ')', 'ig');
+      const cls = options && options.className
+        ? String(options.className)
+        : 'kotn-mark';
+
+      return text.replace(re, '<span class="' + cls + '">$1</span>');
+    }
+  };
+
+  KOTN.search = search;
 
   // ============================================================
   // Async Utilities
@@ -1727,5 +1787,6 @@
     collectIdsFromIndex: collectListingIdsFromIndex
   };
 })();
+
 
 
