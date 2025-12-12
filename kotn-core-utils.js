@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.9.1
+// v0.9.2
 
 (function () {
   'use strict';
@@ -1188,6 +1188,151 @@
     });
   }
 
+  // ============================================================
+  // Shelf Row Filters
+  // ============================================================
+
+  function parseNumRangesText(text) {
+    const value = dom.norm(text || '');
+    if (!value) return null;
+    const parts = value.split(',');
+    const set = new Set();
+    parts.forEach(part => {
+      const p = String(part || '').trim();
+      if (!p) return;
+      if (/^\d+$/.test(p)) {
+        set.add(parseInt(p, 10));
+        return;
+      }
+      const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (!m) return;
+      const a = parseInt(m[1], 10);
+      const b = parseInt(m[2], 10);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      for (let n = lo; n <= hi; n += 1) set.add(n);
+    });
+    return set.size ? set : null;
+  }
+
+  function parseLetterRangesText(text) {
+    const value = dom.norm(text || '');
+    if (!value) return null;
+    const parts = value.split(',');
+    const set = new Set();
+    parts.forEach(part => {
+      const p = String(part || '').trim().toUpperCase();
+      if (!p) return;
+      if (/^[A-Z]$/.test(p)) {
+        set.add(p);
+        return;
+      }
+      const m = p.match(/^([A-Z])\s*-\s*([A-Z])$/);
+      if (!m) return;
+      const a = m[1].charCodeAt(0);
+      const b = m[2].charCodeAt(0);
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      for (let c = lo; c <= hi; c += 1) set.add(String.fromCharCode(c));
+    });
+    return set.size ? set : null;
+  }
+
+  function readShelfRowName(row) {
+    if (!row) return '';
+    if (row.dataset && row.dataset.kName) return String(row.dataset.kName);
+    const cell = row.querySelector && row.querySelector('.shelf-col.name');
+    if (!cell) return '';
+    return dom.norm(cell.textContent || '');
+  }
+
+  function readShelfRowHasStaff(row) {
+    if (!row) return false;
+    if (row.dataset && row.dataset.kHasStaff === '1') return true;
+    if (row.dataset && row.dataset.kHasStaff === '0') return false;
+    const txt = dom.norm(row.querySelector && row.querySelector('.shelf-col.staff .assigned-list') && row.querySelector('.shelf-col.staff .assigned-list').textContent || '');
+    return !!txt;
+  }
+
+  function readShelfRowHasTeam(row) {
+    if (!row) return false;
+    if (row.dataset && row.dataset.kHasTeam === '1') return true;
+    if (row.dataset && row.dataset.kHasTeam === '0') return false;
+    const txt = dom.norm(row.querySelector && row.querySelector('.shelf-col.team .assigned-list') && row.querySelector('.shelf-col.team .assigned-list').textContent || '');
+    return !!txt;
+  }
+
+  function normalizeRegexList(val) {
+    if (!val) return [];
+    const list = Array.isArray(val) ? val : [val];
+    return list.filter(Boolean).map(r => {
+      if (r instanceof RegExp) return r;
+      try {
+        return new RegExp(String(r));
+      } catch (e) {
+        return null;
+      }
+    }).filter(Boolean);
+  }
+
+  function matchShelfRow(row, options = {}) {
+    const name = readShelfRowName(row);
+    if (!name) return false;
+
+    if (typeof options.hasStaff === 'boolean') {
+      const ok = readShelfRowHasStaff(row);
+      if (ok !== options.hasStaff) return false;
+    }
+
+    if (typeof options.hasTeam === 'boolean') {
+      const ok = readShelfRowHasTeam(row);
+      if (ok !== options.hasTeam) return false;
+    }
+
+    const include = normalizeRegexList(options.includeRegex);
+    if (include.length) {
+      const hit = include.some(re => re.test(name));
+      if (!hit) return false;
+    }
+
+    const exclude = normalizeRegexList(options.excludeRegex);
+    if (exclude.length) {
+      const hit = exclude.some(re => re.test(name));
+      if (hit) return false;
+    }
+
+    if (options.regex) {
+      let re;
+      try {
+        re = options.regex instanceof RegExp ? options.regex : new RegExp(String(options.regex));
+      } catch (e) {
+        return false;
+      }
+      return re.test(name);
+    }
+
+    const prefix = dom.norm(options.prefix || '').toUpperCase();
+    const nums = parseNumRangesText(options.nums || '');
+    const letters = parseLetterRangesText(options.letters || '');
+    if (!prefix && !nums && !letters) return true;
+
+    const parts = parseShelfName(name);
+    if (!parts || !parts.full) return false;
+    if (prefix && String(parts.prefix || '').toUpperCase() !== prefix) return false;
+    if (nums && (parts.number == null || !nums.has(parts.number))) return false;
+    if (letters) {
+      const suf = String(parts.suffix || '').toUpperCase();
+      if (!letters.has(suf)) return false;
+    }
+    return true;
+  }
+
+  function filterShelfRows(rows, options = {}) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.filter(row => matchShelfRow(row, options));
+  }
+
   KOTN.shelves = {
     normalizeName: normalizeShelfName,
     parseName: parseShelfName,
@@ -1197,7 +1342,9 @@
     assignTeam: assignShelfTeam,
     clearTeam: clearShelfTeam,
     assignStaff: assignShelfStaff,
-    removeStaff: removeShelfStaff
+    removeStaff: removeShelfStaff,
+    matchRow: matchShelfRow,
+    filterRows: filterShelfRows
   };
 
   // ============================================================
@@ -1787,6 +1934,7 @@
     collectIdsFromIndex: collectListingIdsFromIndex
   };
 })();
+
 
 
 
