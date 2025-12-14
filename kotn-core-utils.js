@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.9.2
+// v0.10.0
 
 (function () {
   'use strict';
@@ -816,6 +816,129 @@
   KOTN.page = {
     loadInIframe
   };
+
+  // ============================================================
+// Shelf Scope DSL
+// ============================================================
+
+function normalizeScopePrefix(prefix) {
+  return dom.norm(prefix || '').toUpperCase();
+}
+
+function mergeScopeRules(rules) {
+  const list = Array.isArray(rules) ? rules : [];
+  const byPrefix = new Map();
+  list.forEach(r => {
+    if (!r) return;
+    const p = normalizeScopePrefix(r.prefix);
+    const lo = Number(r.lo);
+    const hi = Number(r.hi);
+    if (!p || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
+    if (!byPrefix.has(p)) byPrefix.set(p, []);
+    byPrefix.get(p).push({ prefix: p, lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
+  });
+  const out = [];
+  byPrefix.forEach(ranges => {
+    ranges.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+    let cur = null;
+    ranges.forEach(r => {
+      if (!cur) {
+        cur = { prefix: r.prefix, lo: r.lo, hi: r.hi };
+        return;
+      }
+      if (r.lo <= cur.hi + 1) { cur.hi = Math.max(cur.hi, r.hi); } else {
+        out.push(cur); cur = {
+          prefix: r.prefix, lo: r.lo, hi:
+            r.hi
+        };
+      }
+    }); if (cur) out.push(cur);
+  }); return out;
+} function compileShelfScope(text, options = {}) {
+  const
+  raw = dom.norm(text || ''); const implicit = Array.isArray(options.implicitPrefixes) ?
+    options.implicitPrefixes.map(normalizeScopePrefix).filter(Boolean) : []; if (!raw) {
+      return {
+        raw: '', rules: [],
+        errors: [], implicitPrefixes: implicit
+      };
+    } const parts = raw.split(',').map(p => String(p ||
+      '').trim()).filter(Boolean);
+  const rules = [];
+  const errors = [];
+  let lastPrefix = null;
+  function addRule(prefix, a, b) {
+    const p = normalizeScopePrefix(prefix);
+    const lo = Number(a);
+    const hi = Number(b);
+    if (!p || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
+    rules.push({ prefix: p, lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
+  }
+  parts.forEach(tokenRaw => {
+    const token = String(tokenRaw || '').replace(/\\s+/g, '');
+    if (!token) return;
+    let prefix = null;
+    let rangeText = null;
+    const colon = token.match(/^([A-Za-z]+)\\:(.+)$/);
+    if (colon) {
+      prefix = colon[1];
+      rangeText = colon[2];
+    } else {
+      const prefixed = token.match(/^([A-Za-z]+)(\\d+)(?:\\-(\\d+))?$/);
+      if (prefixed) {
+        prefix = prefixed[1];
+        rangeText = prefixed[2] + (prefixed[3] ? '-' + prefixed[3] : '');
+      }
+    }
+    if (prefix) {
+      lastPrefix = normalizeScopePrefix(prefix);
+      const m = String(rangeText || '').match(/^(\\d+)(?:\\-(\\d+))?$/);
+      if (!m) {
+        errors.push('Invalid range: ' + tokenRaw);
+        return;
+      }
+      const a = parseInt(m[1], 10);
+      const b = parseInt(m[2] ? m[2] : m[1], 10);
+      addRule(lastPrefix, a, b);
+      return;
+    }
+    const digitsOnly = token.match(/^(\\d+)(?:\\-(\\d+))?$/);
+    if (digitsOnly) {
+      const a = parseInt(digitsOnly[1], 10);
+      const b = parseInt(digitsOnly[2] ? digitsOnly[2] : digitsOnly[1], 10);
+      const pfxs = lastPrefix ? [lastPrefix] : implicit;
+      if (!pfxs.length) {
+        errors.push('Missing prefix for: ' + tokenRaw);
+        return;
+      }
+      pfxs.forEach(p => addRule(p, a, b));
+      return;
+    }
+    errors.push('Unrecognized token: ' + tokenRaw);
+  });
+  return { raw, rules: mergeScopeRules(rules), errors, implicitPrefixes: implicit };
+}
+
+function matchShelfNameScope(name, scope) {
+  if (!scope) return true;
+  const compiled = typeof scope === 'string' ? compileShelfScope(scope) : scope;
+  if (!compiled || !compiled.rules || !compiled.rules.length) return true;
+  const parts = parseShelfName(name);
+  if (!parts || parts.number == null) return false;
+  const prefix = normalizeScopePrefix(parts.prefix);
+  const n = Number(parts.number);
+  if (!prefix || !Number.isFinite(n)) return false;
+  const rules = compiled.rules;
+  for (let i = 0; i < rules.length; i += 1) {
+    const r = rules[i]; if (r.prefix !== prefix) continue; if (n >= r.lo && n <=
+      r.hi) return true;
+  } return false;
+} function filterShelfNamesByScope(names, scope) {
+  const
+  list = Array.isArray(names) ? names : []; if (!scope) return list.slice(); const compiled = typeof scope === 'string' ?
+    compileShelfScope(scope) : scope; if (!compiled || !compiled.rules || !compiled.rules.length) return list.slice();
+  return list.filter(n => matchShelfNameScope(n, compiled));
+}
 
   // ============================================================
   // Auth Helpers
@@ -1934,6 +2057,7 @@
     collectIdsFromIndex: collectListingIdsFromIndex
   };
 })();
+
 
 
 
