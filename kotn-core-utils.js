@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.10.0
+// v0.11.0
 
 (function () {
   'use strict';
@@ -818,127 +818,149 @@
   };
 
   // ============================================================
-// Shelf Scope DSL
-// ============================================================
+  // Shelf Scope DSL
+  // ============================================================
 
-function normalizeScopePrefix(prefix) {
-  return dom.norm(prefix || '').toUpperCase();
-}
-
-function mergeScopeRules(rules) {
-  const list = Array.isArray(rules) ? rules : [];
-  const byPrefix = new Map();
-  list.forEach(r => {
-    if (!r) return;
-    const p = normalizeScopePrefix(r.prefix);
-    const lo = Number(r.lo);
-    const hi = Number(r.hi);
-    if (!p || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
-    if (!byPrefix.has(p)) byPrefix.set(p, []);
-    byPrefix.get(p).push({ prefix: p, lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
-  });
-  const out = [];
-  byPrefix.forEach(ranges => {
-    ranges.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
-    let cur = null;
-    ranges.forEach(r => {
-      if (!cur) {
-        cur = { prefix: r.prefix, lo: r.lo, hi: r.hi };
-        return;
-      }
-      if (r.lo <= cur.hi + 1) { cur.hi = Math.max(cur.hi, r.hi); } else {
-        out.push(cur); cur = {
-          prefix: r.prefix, lo: r.lo, hi:
-            r.hi
-        };
-      }
-    }); if (cur) out.push(cur);
-  }); return out;
-} function compileShelfScope(text, options = {}) {
-  const
-  raw = dom.norm(text || ''); const implicit = Array.isArray(options.implicitPrefixes) ?
-    options.implicitPrefixes.map(normalizeScopePrefix).filter(Boolean) : []; if (!raw) {
-      return {
-        raw: '', rules: [],
-        errors: [], implicitPrefixes: implicit
-      };
-    } const parts = raw.split(',').map(p => String(p ||
-      '').trim()).filter(Boolean);
-  const rules = [];
-  const errors = [];
-  let lastPrefix = null;
-  function addRule(prefix, a, b) {
-    const p = normalizeScopePrefix(prefix);
-    const lo = Number(a);
-    const hi = Number(b);
-    if (!p || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
-    rules.push({ prefix: p, lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
+  function normalizeScopePrefix(prefix) {
+    return dom.norm(prefix || '').toUpperCase();
   }
-  parts.forEach(tokenRaw => {
-    const token = String(tokenRaw || '').replace(/\\s+/g, '');
-    if (!token) return;
-    let prefix = null;
-    let rangeText = null;
-    const colon = token.match(/^([A-Za-z]+)\\:(.+)$/);
-    if (colon) {
-      prefix = colon[1];
-      rangeText = colon[2];
-    } else {
-      const prefixed = token.match(/^([A-Za-z]+)(\\d+)(?:\\-(\\d+))?$/);
-      if (prefixed) {
-        prefix = prefixed[1];
-        rangeText = prefixed[2] + (prefixed[3] ? '-' + prefixed[3] : '');
-      }
-    }
-    if (prefix) {
-      lastPrefix = normalizeScopePrefix(prefix);
-      const m = String(rangeText || '').match(/^(\\d+)(?:\\-(\\d+))?$/);
-      if (!m) {
-        errors.push('Invalid range: ' + tokenRaw);
-        return;
-      }
-      const a = parseInt(m[1], 10);
-      const b = parseInt(m[2] ? m[2] : m[1], 10);
-      addRule(lastPrefix, a, b);
-      return;
-    }
-    const digitsOnly = token.match(/^(\\d+)(?:\\-(\\d+))?$/);
-    if (digitsOnly) {
-      const a = parseInt(digitsOnly[1], 10);
-      const b = parseInt(digitsOnly[2] ? digitsOnly[2] : digitsOnly[1], 10);
-      const pfxs = lastPrefix ? [lastPrefix] : implicit;
-      if (!pfxs.length) {
-        errors.push('Missing prefix for: ' + tokenRaw);
-        return;
-      }
-      pfxs.forEach(p => addRule(p, a, b));
-      return;
-    }
-    errors.push('Unrecognized token: ' + tokenRaw);
-  });
-  return { raw, rules: mergeScopeRules(rules), errors, implicitPrefixes: implicit };
-}
 
-function matchShelfNameScope(name, scope) {
-  if (!scope) return true;
-  const compiled = typeof scope === 'string' ? compileShelfScope(scope) : scope;
-  if (!compiled || !compiled.rules || !compiled.rules.length) return true;
-  const parts = parseShelfName(name);
-  if (!parts || parts.number == null) return false;
-  const prefix = normalizeScopePrefix(parts.prefix);
-  const n = Number(parts.number);
-  if (!prefix || !Number.isFinite(n)) return false;
-  const rules = compiled.rules;
-  for (let i = 0; i < rules.length; i += 1) {
-    const r = rules[i]; if (r.prefix !== prefix) continue; if (n >= r.lo && n <=
-      r.hi) return true;
-  } return false;
-} function filterShelfNamesByScope(names, scope) {
-  const
-  list = Array.isArray(names) ? names : []; if (!scope) return list.slice(); const compiled = typeof scope === 'string' ?
-    compileShelfScope(scope) : scope; if (!compiled || !compiled.rules || !compiled.rules.length) return list.slice();
-  return list.filter(n => matchShelfNameScope(n, compiled));
-}
+  function mergeScopeRules(rules) {
+    const list = Array.isArray(rules) ? rules : [];
+    const byPrefix = new Map();
+    list.forEach(r => {
+      if (!r) return;
+      const p = normalizeScopePrefix(r.prefix);
+      const lo = Number(r.lo);
+      const hi = Number(r.hi);
+      if (!p || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
+      if (!byPrefix.has(p)) byPrefix.set(p, []);
+      byPrefix.get(p).push({ prefix: p, lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
+    });
+    const out = [];
+    byPrefix.forEach(ranges => {
+      ranges.sort((a, b) => a.lo - b.lo || a.hi - b.hi);
+      let cur = null;
+      ranges.forEach(r => {
+        if (!cur) {
+          cur = { prefix: r.prefix, lo: r.lo, hi: r.hi };
+          return;
+        }
+        if (r.lo <= cur.hi + 1) {
+          cur.hi = Math.max(cur.hi, r.hi);
+        } else {
+          out.push(cur);
+          cur = { prefix: r.prefix, lo: r.lo, hi: r.hi };
+        }
+      });
+      if (cur) out.push(cur);
+    });
+    return out;
+  }
+
+  function compileShelfScope(text, options = {}) {
+    const raw = dom.norm(text || '');
+    const implicit = Array.isArray(options.implicitPrefixes)
+      ? options.implicitPrefixes.map(normalizeScopePrefix).filter(Boolean)
+      : [];
+    if (!raw) {
+      return { raw: '', rules: [], errors: [], implicitPrefixes: implicit };
+    }
+    const parts = raw.split(',').map(p => String(p || '').trim()).filter(Boolean);
+    const rules = [];
+    const errors = [];
+    let lastPrefix = null;
+
+    function addRule(prefix, a, b) {
+      const p = normalizeScopePrefix(prefix);
+      const lo = Number(a);
+      const hi = Number(b);
+      if (!p || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
+      rules.push({ prefix: p, lo: Math.min(lo, hi), hi: Math.max(lo, hi) });
+    }
+
+    parts.forEach(tokenRaw => {
+      const token = String(tokenRaw || '').replace(/\s+/g, '');
+      if (!token) return;
+
+      let prefix = null;
+      let rangeText = null;
+
+      const colon = token.match(/^([A-Za-z]+)\:(.+)$/);
+      if (colon) {
+        prefix = colon[1];
+        rangeText = colon[2];
+      } else {
+        const prefixed = token.match(/^([A-Za-z]+)(\d+)(?:\-(\d+))?$/);
+        if (prefixed) {
+          prefix = prefixed[1];
+          rangeText = prefixed[2] + (prefixed[3] ? '-' + prefixed[3] : '');
+        }
+      }
+
+      if (prefix) {
+        lastPrefix = normalizeScopePrefix(prefix);
+        const m = String(rangeText || '').match(/^(\d+)(?:\-(\d+))?$/);
+        if (!m) {
+          errors.push('Invalid range: ' + tokenRaw);
+          return;
+        }
+        const a = parseInt(m[1], 10);
+        const b = parseInt(m[2] ? m[2] : m[1], 10);
+        addRule(lastPrefix, a, b);
+        return;
+      }
+
+      const digitsOnly = token.match(/^(\d+)(?:\-(\d+))?$/);
+      if (digitsOnly) {
+        const a = parseInt(digitsOnly[1], 10);
+        const b = parseInt(digitsOnly[2] ? digitsOnly[2] : digitsOnly[1], 10);
+        const pfxs = lastPrefix ? [lastPrefix] : implicit;
+        if (!pfxs.length) {
+          errors.push('Missing prefix for: ' + tokenRaw);
+          return;
+        }
+        pfxs.forEach(p => addRule(p, a, b));
+        return;
+      }
+
+      errors.push('Unrecognized token: ' + tokenRaw);
+    });
+
+    return { raw, rules: mergeScopeRules(rules), errors, implicitPrefixes: implicit };
+  }
+
+  function matchShelfNameScope(name, scope) {
+    if (!scope) return true;
+    const compiled = typeof scope === 'string' ? compileShelfScope(scope) : scope;
+    if (!compiled || !compiled.rules || !compiled.rules.length) return true;
+    const parts = parseShelfName(name);
+    if (!parts || parts.number == null) return false;
+    const prefix = normalizeScopePrefix(parts.prefix);
+    const n = Number(parts.number);
+    if (!prefix || !Number.isFinite(n)) return false;
+    const rules = compiled.rules;
+    for (let i = 0; i < rules.length; i += 1) {
+      const r = rules[i];
+      if (r.prefix !== prefix) continue;
+      if (n >= r.lo && n <= r.hi) return true;
+    }
+    return false;
+  }
+
+  function filterShelfNamesByScope(names, scope) {
+    const list = Array.isArray(names) ? names : [];
+    if (!scope) return list.slice();
+    const compiled = typeof scope === 'string' ? compileShelfScope(scope) : scope;
+    if (!compiled || !compiled.rules || !compiled.rules.length) return list.slice();
+    return list.filter(n => matchShelfNameScope(n, compiled));
+  }
+
+  KOTN.shelfScope = {
+    compile: compileShelfScope,
+    matchName: matchShelfNameScope,
+    filterNames: filterShelfNamesByScope
+  };
 
   // ============================================================
   // Auth Helpers
@@ -1040,6 +1062,153 @@ function matchShelfNameScope(name, scope) {
     return null;
   }
 
+  function getCookie(name) {
+    const target = String(name || '') + '=';
+    const parts = String(document.cookie || '').split(';');
+    for (let i = 0; i < parts.length; i += 1) {
+      const s = parts[i].trim();
+      if (s.startsWith(target)) return s.substring(target.length);
+    }
+    return '';
+  }
+
+  function safeDecode(value) {
+    if (!value) return '';
+    try {
+      return decodeURIComponent(value);
+    } catch (err) {
+      return String(value);
+    }
+  }
+
+  function getXSRFToken() {
+    return safeDecode(getCookie('XSRF-TOKEN'));
+  }
+
+  function getSocketId() {
+    return safeDecode(getCookie('io'));
+  }
+
+  function safeGet(obj, path) {
+    try {
+      return String(path || '').split('.').reduce((o, k) => (o && o[k] !== undefined ? o[k] : undefined), obj);
+    } catch (err) {
+      return undefined;
+    }
+  }
+
+  function discoverAuthorizationToken(options = {}) {
+    const override = dom.norm(options.authTokenOverride || '');
+    if (override) return override;
+
+    const ax = window.axios;
+    const a1 = safeGet(ax, 'defaults.headers.common.authorization');
+    if (typeof a1 === 'string' && a1.trim()) return a1.trim();
+    const a2 = safeGet(ax, 'defaults.headers.common.Authorization');
+    if (typeof a2 === 'string' && a2.trim()) return a2.trim();
+    const a3 = safeGet(ax, 'defaults.headers.authorization');
+    if (typeof a3 === 'string' && a3.trim()) return a3.trim();
+    const a4 = safeGet(ax, 'defaults.headers.Authorization');
+    if (typeof a4 === 'string' && a4.trim()) return a4.trim();
+
+    const keys = [
+      'authorization',
+      'auth_token',
+      'authToken',
+      'api_token',
+      'apiToken',
+      'access_token',
+      'accessToken',
+      'token'
+    ];
+
+    for (let i = 0; i < keys.length; i += 1) {
+      const k = keys[i];
+      try {
+        const v = window.localStorage ? window.localStorage.getItem(k) : null;
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      } catch (err) {
+      }
+      try {
+        const v2 = window.sessionStorage ? window.sessionStorage.getItem(k) : null;
+        if (typeof v2 === 'string' && v2.trim()) return v2.trim();
+      } catch (err) {
+      }
+    }
+
+    return '';
+  }
+
+  function buildAppHeaders(options = {}) {
+    const includeAuth = options.includeAuth !== false;
+    const includeCSRF = options.includeCSRF !== false;
+    const includeXSRF = options.includeXSRF !== false;
+    const includeSocketId = options.includeSocketId !== false;
+    const requestedWith = options.requestedWith !== false;
+
+    const accept = options.accept || 'application/json, text/plain, */*';
+    const hasBody = !!options.hasBody;
+    const isJSON = options.json !== false;
+
+    const headers = {};
+    headers.accept = accept;
+
+    if (requestedWith) {
+      headers['x-requested-with'] = 'XMLHttpRequest';
+    }
+
+    if (hasBody && isJSON) {
+      headers['content-type'] = 'application/json;charset=UTF-8';
+    }
+
+    let auth = '';
+    if (includeAuth) {
+      auth = discoverAuthorizationToken({ authTokenOverride: options.authTokenOverride });
+      if (auth) headers.authorization = auth;
+    }
+
+    let csrf = '';
+    if (includeCSRF) {
+      csrf = getCSRFToken() || '';
+      if (csrf) {
+        headers['x-csrf-token'] = csrf;
+        headers['X-CSRF-TOKEN'] = csrf;
+      }
+    }
+
+    let xsrf = '';
+    if (includeXSRF) {
+      xsrf = getXSRFToken() || '';
+      if (xsrf) {
+        headers['x-xsrf-token'] = xsrf;
+        headers['X-XSRF-TOKEN'] = xsrf;
+      }
+    }
+
+    let socketId = '';
+    if (includeSocketId) {
+      socketId = getSocketId() || '';
+      if (socketId) headers['x-socket-id'] = socketId;
+    }
+
+    const extra = options.headers && typeof options.headers === 'object' ? options.headers : null;
+    if (extra) {
+      Object.keys(extra).forEach(k => {
+        headers[k] = extra[k];
+      });
+    }
+
+    return {
+      headers,
+      diag: {
+        authorizationPresent: !!auth,
+        csrfMetaPresent: !!csrf,
+        xsrfCookiePresent: !!xsrf,
+        socketIdPresent: !!socketId
+      }
+    };
+  }
+
   async function csrfFetch(input, init = {}) {
     const options = Object.assign({}, init);
     const headers = new Headers(options.headers || {});
@@ -1063,10 +1232,73 @@ function matchShelfNameScope(name, scope) {
     return res.json();
   }
 
+  async function requestJSON(input, options = {}) {
+    const url = String(input || '');
+    const method = String(options.method || 'GET').toUpperCase();
+    const body = options.body;
+    const hasBody = body !== undefined && body !== null && method !== 'GET' && method !== 'HEAD';
+
+    const built = buildAppHeaders({
+      json: true,
+      hasBody,
+      includeAuth: options.includeAuth,
+      includeCSRF: options.includeCSRF,
+      includeXSRF: options.includeXSRF,
+      includeSocketId: options.includeSocketId,
+      requestedWith: options.requestedWith,
+      accept: options.accept,
+      headers: options.headers,
+      authTokenOverride: options.authTokenOverride
+    });
+
+    const init = {
+      method,
+      credentials: options.credentials || 'same-origin',
+      headers: built.headers
+    };
+
+    if (hasBody) {
+      init.body = typeof body === 'string' ? body : JSON.stringify(body);
+    }
+
+    const res = await fetch(url, init);
+
+    let text = '';
+    try {
+      text = await res.text();
+    } catch (err) {
+    }
+
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch (err) {
+    }
+
+    if (!res.ok) {
+      const err = new Error('requestJSON: HTTP ' + res.status + ' for ' + url);
+      err.status = res.status;
+      err.url = url;
+      err.bodyText = text;
+      err.bodyJson = json;
+      err.diag = built.diag;
+      throw err;
+    }
+
+    return json;
+  }
+
   KOTN.http = {
     getCSRFToken,
+    getCookie,
+    safeDecode,
+    getXSRFToken,
+    getSocketId,
+    discoverAuthorizationToken,
+    buildAppHeaders,
     csrfFetch,
-    fetchJSON
+    fetchJSON,
+    requestJSON
   };
 
   // ============================================================
@@ -1311,10 +1543,6 @@ function matchShelfNameScope(name, scope) {
     });
   }
 
-  // ============================================================
-  // Shelf Row Filters
-  // ============================================================
-
   function parseNumRangesText(text) {
     const value = dom.norm(text || '');
     if (!value) return null;
@@ -1485,7 +1713,7 @@ function matchShelfNameScope(name, scope) {
   function ensurePromptPatched() {
     const w = getScriptWindow();
     if (w.kotnArmPrompt) return;
-    const code = '(function(){var o=window.prompt,a=null;window.kotnArmPrompt=function(v){try{a=String(v);}catch(e){a=\"\";}};window.prompt=function(m,d){try{if(a!==null&&a!==undefined){var t=a;a=null;return t;}}catch(e){}return o.call(window,m,d);};})();';
+    const code = '(function(){var o=window.prompt,a=null;window.kotnArmPrompt=function(v){try{a=String(v);}catch(e){a="";}};window.prompt=function(m,d){try{if(a!==null&&a!==undefined){var t=a;a=null;return t;}}catch(e){}return o.call(window,m,d);};})();';
     const s = document.createElement('script');
     s.textContent = code;
     document.documentElement.appendChild(s);
@@ -1801,34 +2029,34 @@ function matchShelfNameScope(name, scope) {
   // ============================================================
 
   function findListerDomRows() {
-    const tiles=dom.qsa('.lister-stats-tile');
-    const rows=[];
-    tiles.forEach(tile=>{
-      const nameLink=tile.querySelector('.lister a[href*="/management/users/"]');
-      if(!nameLink) return;
-      const rawName=dom.norm(nameLink.textContent||'');
-      if(!rawName) return;
-      const lowerName=rawName.toLowerCase();
-      if(lowerName.includes('team')) return;
-      const href=String(nameLink.getAttribute('href')||'');
-      const m=href.match(/\/management\/users\/(\d+)/);
-      if(!m) return;
-      const staffId=Number(m[1]);
-      if(!Number.isFinite(staffId)) return;
-      const badgeEl=tile.querySelector('.lister .badge');
-      const teamBadge=badgeEl?dom.norm(badgeEl.textContent||''):'';
+    const tiles = dom.qsa('.lister-stats-tile');
+    const rows = [];
+    tiles.forEach(tile => {
+      const nameLink = tile.querySelector('.lister a[href*="/management/users/"]');
+      if (!nameLink) return;
+      const rawName = dom.norm(nameLink.textContent || '');
+      if (!rawName) return;
+      const lowerName = rawName.toLowerCase();
+      if (lowerName.includes('team')) return;
+      const href = String(nameLink.getAttribute('href') || '');
+      const m = href.match(/\/management\/users\/(\d+)/);
+      if (!m) return;
+      const staffId = Number(m[1]);
+      if (!Number.isFinite(staffId)) return;
+      const badgeEl = tile.querySelector('.lister .badge');
+      const teamBadge = badgeEl ? dom.norm(badgeEl.textContent || '') : '';
       rows.push({
         tile,
         staffId,
-        name:rawName,
+        name: rawName,
         teamBadge
       });
     });
     return rows;
   }
 
-  KOTN.listers=KOTN.listers||{};
-  KOTN.listers.findDomRows=findListerDomRows;
+  KOTN.listers = KOTN.listers || {};
+  KOTN.listers.findDomRows = findListerDomRows;
 
   // ============================================================
   // Leaderboard Helpers
@@ -1863,8 +2091,6 @@ function matchShelfNameScope(name, scope) {
   // ============================================================
 
   function extractListingFromEdit(doc, id, options) {
-    const cfg = options || {};
-    const domRef = KOTN.dom;
     const data = {
       id: String(id),
       title: '',
@@ -1894,7 +2120,7 @@ function matchShelfNameScope(name, scope) {
       imageCount: 0
     };
     const createdRow = doc.querySelector('.form-group.row span.col-form-label');
-    if (createdRow && createdRow.textContent && domRef.norm(createdRow.textContent).toLowerCase() === 'created by') {
+    if (createdRow && createdRow.textContent && dom.norm(createdRow.textContent).toLowerCase() === 'created by') {
       const input = createdRow.parentElement && createdRow.parentElement.querySelector('.input-group input[disabled][type="text"]');
       if (input && input.value) {
         data.createdBy = input.value;
@@ -1930,11 +2156,11 @@ function matchShelfNameScope(name, scope) {
     }
     const cat1Button = doc.querySelector('.cat-1-button');
     if (cat1Button && cat1Button.textContent) {
-      data.primaryCategory = domRef.norm(cat1Button.textContent);
+      data.primaryCategory = dom.norm(cat1Button.textContent);
     }
     const cat2Button = doc.querySelector('.cat-2-button');
     if (cat2Button && cat2Button.textContent) {
-      data.secondaryCategory = domRef.norm(cat2Button.textContent);
+      data.secondaryCategory = dom.norm(cat2Button.textContent);
     }
     const catIdsHidden = doc.querySelector('#categoryIdsJson');
     if (catIdsHidden && catIdsHidden.value) {
@@ -1949,7 +2175,7 @@ function matchShelfNameScope(name, scope) {
       data.itemConditionId = itemCondSelect.value || '';
       const sel = itemCondSelect.options[itemCondSelect.selectedIndex];
       if (sel && sel.textContent) {
-        data.itemConditionLabel = domRef.norm(sel.textContent);
+        data.itemConditionLabel = dom.norm(sel.textContent);
       }
     }
     const pkgCondSelect = doc.querySelector('select[name="package_condition_id"]');
@@ -1957,7 +2183,7 @@ function matchShelfNameScope(name, scope) {
       data.packageConditionId = pkgCondSelect.value || '';
       const sel = pkgCondSelect.options[pkgCondSelect.selectedIndex];
       if (sel && sel.textContent) {
-        data.packageConditionLabel = domRef.norm(sel.textContent);
+        data.packageConditionLabel = dom.norm(sel.textContent);
       }
     }
     const macroNotesTextarea = doc.querySelector('textarea[name="macro_notes"]');
@@ -2057,8 +2283,3 @@ function matchShelfNameScope(name, scope) {
     collectIdsFromIndex: collectListingIdsFromIndex
   };
 })();
-
-
-
-
-
