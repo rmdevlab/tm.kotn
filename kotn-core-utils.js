@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v0.11.0
+// v1.3.0
 
 (function () {
   'use strict';
@@ -17,8 +17,20 @@
     qsa(selector, root = document) {
       return Array.from(root.querySelectorAll(selector));
     },
+    text(el) {
+      return (el && el.textContent ? String(el.textContent) : '').replace(/\s+/g, ' ').trim();
+    },
     norm(text) {
       return (text || '').trim().replace(/\s+/g, ' ');
+    },
+    attr(el, name, fallback = '') {
+      if (!el || !name) return fallback;
+      const value = el.getAttribute(name);
+      return value == null ? fallback : value;
+    },
+    closest(el, selector) {
+      if (!el || typeof el.closest !== 'function') return null;
+      return el.closest(selector);
     },
     visible(el) {
       if (!el) return false;
@@ -30,12 +42,34 @@
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
     },
+    injectStyle(id, css) {
+      const key = id ? 'kotn-style-' + String(id) : null;
+      if (key) {
+        const existing = document.getElementById(key);
+        if (existing) {
+          if (existing.textContent !== String(css || '')) {
+            existing.textContent = String(css || '');
+          }
+          return existing;
+        }
+      }
+      const style = document.createElement('style');
+      if (key) style.id = key;
+      style.textContent = String(css || '');
+      document.head.appendChild(style);
+      return style;
+    },
     create(tag, props = {}, children = []) {
       const el = document.createElement(tag);
       Object.entries(props).forEach(([key, value]) => {
         if (value == null) return;
         if (key === 'style' && typeof value === 'object') {
           Object.assign(el.style, value);
+        } else if (key === 'dataset' && typeof value === 'object') {
+          Object.entries(value).forEach(([dk, dv]) => {
+            if (dv == null) return;
+            el.dataset[dk] = String(dv);
+          });
         } else if (key in el) {
           el[key] = value;
         } else {
@@ -52,6 +86,9 @@
         }
       });
       return el;
+    },
+    nextFrame() {
+      return new Promise(resolve => requestAnimationFrame(() => resolve()));
     },
     waitFor(selector, options = {}) {
       const root = options.root || document;
@@ -72,6 +109,62 @@
           } else if (Date.now() - start > timeoutMs) {
             clearInterval(id);
             reject(new Error('waitFor: timeout waiting for ' + selector));
+          }
+        }, pollMs);
+      });
+    },
+    waitForAll(selector, options = {}) {
+      const root = options.root || document;
+      const timeoutMs = options.timeoutMs == null ? 30000 : options.timeoutMs;
+      const pollMs = options.pollMs == null ? 50 : options.pollMs;
+      const minCount = options.minCount == null ? 1 : options.minCount;
+      return new Promise((resolve, reject) => {
+        const found = Array.from(root.querySelectorAll(selector));
+        if (found.length >= minCount) {
+          resolve(found);
+          return;
+        }
+        const start = Date.now();
+        const id = setInterval(() => {
+          const list = Array.from(root.querySelectorAll(selector));
+          if (list.length >= minCount) {
+            clearInterval(id);
+            resolve(list);
+          } else if (Date.now() - start > timeoutMs) {
+            clearInterval(id);
+            reject(new Error('waitForAll: timeout waiting for ' + selector));
+          }
+        }, pollMs);
+      });
+    },
+    waitForAny(selectors, options = {}) {
+      const root = options.root || document;
+      const timeoutMs = options.timeoutMs == null ? 30000 : options.timeoutMs;
+      const pollMs = options.pollMs == null ? 50 : options.pollMs;
+      const list = Array.isArray(selectors) ? selectors.filter(Boolean) : [selectors].filter(Boolean);
+      return new Promise((resolve, reject) => {
+        for (let i = 0; i < list.length; i += 1) {
+          const selector = list[i];
+          const found = root.querySelector(selector);
+          if (found) {
+            resolve({ selector, element: found });
+            return;
+          }
+        }
+        const start = Date.now();
+        const id = setInterval(() => {
+          for (let i = 0; i < list.length; i += 1) {
+            const selector = list[i];
+            const found = root.querySelector(selector);
+            if (found) {
+              clearInterval(id);
+              resolve({ selector, element: found });
+              return;
+            }
+          }
+          if (Date.now() - start > timeoutMs) {
+            clearInterval(id);
+            reject(new Error('waitForAny: timeout waiting for selectors'));
           }
         }, pollMs);
       });
@@ -147,6 +240,148 @@
   const asyncUtils = {
     sleep(ms) {
       return new Promise(resolve => setTimeout(resolve, ms));
+    },
+    debounce(fn, waitMs = 150) {
+      let timer = null;
+      let lastArgs = null;
+      let lastThis = null;
+      function wrapped(...args) {
+        lastArgs = args;
+        lastThis = this;
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          fn.apply(lastThis, lastArgs);
+        }, waitMs);
+      }
+      wrapped.cancel = function () {
+        clearTimeout(timer);
+        timer = null;
+      };
+      wrapped.flush = function () {
+        if (!timer) return;
+        clearTimeout(timer);
+        timer = null;
+        fn.apply(lastThis, lastArgs || []);
+      };
+      return wrapped;
+    },
+    throttle(fn, waitMs = 150) {
+      let lastRun = 0;
+      let timer = null;
+      let queuedArgs = null;
+      let queuedThis = null;
+      function invoke() {
+        lastRun = Date.now();
+        timer = null;
+        fn.apply(queuedThis, queuedArgs || []);
+      }
+      return function (...args) {
+        const now = Date.now();
+        const remaining = waitMs - (now - lastRun);
+        queuedArgs = args;
+        queuedThis = this;
+        if (remaining <= 0 || remaining > waitMs) {
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          invoke();
+        } else if (!timer) {
+          timer = setTimeout(invoke, remaining);
+        }
+      };
+    },
+    createQueue(options = {}) {
+      const concurrency = options.concurrency == null ? 1 : Math.max(1, Number(options.concurrency) || 1);
+      const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+      const pending = [];
+      let running = 0;
+      let completed = 0;
+      let failed = 0;
+      let idleResolvers = [];
+      function resolveIdle() {
+        if (running === 0 && pending.length === 0) {
+          const resolvers = idleResolvers.slice();
+          idleResolvers = [];
+          resolvers.forEach(resolve => resolve({
+            running,
+            pending: pending.length,
+            completed,
+            failed
+          }));
+        }
+      }
+      function pump() {
+        while (running < concurrency && pending.length) {
+          const job = pending.shift();
+          running += 1;
+          Promise.resolve()
+            .then(job.task)
+            .then(value => {
+              running -= 1;
+              completed += 1;
+              if (onProgress) {
+                onProgress({
+                  running,
+                  pending: pending.length,
+                  completed,
+                  failed
+                });
+              }
+              job.resolve(value);
+              pump();
+              resolveIdle();
+            })
+            .catch(err => {
+              running -= 1;
+              failed += 1;
+              if (onProgress) {
+                onProgress({
+                  running,
+                  pending: pending.length,
+                  completed,
+                  failed
+                });
+              }
+              job.reject(err);
+              pump();
+              resolveIdle();
+            });
+        }
+      }
+      return {
+        push(task) {
+          if (typeof task !== 'function') {
+            return Promise.reject(new Error('queue.push requires a task function'));
+          }
+          return new Promise((resolve, reject) => {
+            pending.push({ task, resolve, reject });
+            pump();
+          });
+        },
+        onIdle() {
+          if (running === 0 && pending.length === 0) {
+            return Promise.resolve({
+              running,
+              pending: pending.length,
+              completed,
+              failed
+            });
+          }
+          return new Promise(resolve => {
+            idleResolvers.push(resolve);
+          });
+        },
+        stats() {
+          return {
+            running,
+            pending: pending.length,
+            completed,
+            failed
+          };
+        }
+      };
     },
     async retry(fn, options = {}) {
       const retries = options.retries == null ? 3 : options.retries;
@@ -303,79 +538,222 @@
   // ============================================================
 
   function createPanel(options) {
-    const id = options.id;
-    const title = options.title || 'KOTN';
-    const parent = options.parent || document.body;
-    const rememberPosition = options.rememberPosition !== false;
-    const defaultPosition = options.defaultPosition || { top: 80, right: 20 };
-    const store = rememberPosition ? createStore({ name: 'panel:' + (id || title), scope: 'local' }) : null;
+    const cfg = options || {};
+    const id = cfg.id || cfg.title || 'KOTN';
+    const title = cfg.title || 'KOTN';
+    const parent = cfg.parent || document.body;
+    const rememberPosition = cfg.rememberPosition !== false;
+    const rememberSize = cfg.rememberSize !== false;
+    const minWidth = cfg.minWidth == null ? 260 : cfg.minWidth;
+    const minHeight = cfg.minHeight == null ? 120 : cfg.minHeight;
+    const maxWidth = cfg.maxWidth == null ? 680 : cfg.maxWidth;
+    const defaultPosition = cfg.defaultPosition || { top: 80, right: 20 };
+    const defaultSize = cfg.defaultSize || { width: 360, height: null };
+    const store = createStore({ name: 'panel:' + id, scope: 'local' });
+
+    dom.injectStyle('panel-base', `
+      .kotn-panel{
+        position:fixed;
+        z-index:999999;
+        background:#111;
+        color:#f5f5f5;
+        font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        font-size:12px;
+        border:1px solid #2f2f2f;
+        border-radius:12px;
+        box-shadow:0 12px 28px rgba(0,0,0,0.35);
+        overflow:hidden;
+        resize:both;
+      }
+      .kotn-panel-header{
+        cursor:move;
+        padding:8px 10px;
+        background:#181818;
+        border-bottom:1px solid #2b2b2b;
+        font-weight:600;
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+        min-height:40px;
+      }
+      .kotn-panel-title{
+        min-width:0;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
+      }
+      .kotn-panel-header-actions{
+        display:flex;
+        align-items:center;
+        gap:6px;
+        flex:0 0 auto;
+      }
+      .kotn-panel-body{
+        padding:10px;
+        overflow:auto;
+        max-height:calc(90vh - 40px);
+      }
+      .kotn-panel-footer{
+        padding:8px 10px;
+        border-top:1px solid #2b2b2b;
+        background:#151515;
+      }
+      .kotn-panel button,
+      .kotn-panel input,
+      .kotn-panel select,
+      .kotn-panel textarea{
+        font:inherit;
+      }
+      .kotn-panel button{
+        border:1px solid #343434;
+        background:#1d1d1d;
+        color:#f5f5f5;
+        border-radius:8px;
+        padding:6px 10px;
+        cursor:pointer;
+      }
+      .kotn-panel button:hover{
+        background:#252525;
+      }
+      .kotn-panel button:disabled{
+        opacity:0.55;
+        cursor:not-allowed;
+      }
+      .kotn-panel input,
+      .kotn-panel select,
+      .kotn-panel textarea{
+        width:100%;
+        background:#151515;
+        color:#f5f5f5;
+        border:1px solid #333;
+        border-radius:8px;
+        padding:6px 8px;
+        box-sizing:border-box;
+      }
+      .kotn-panel .kotn-row{
+        display:flex;
+        gap:8px;
+        align-items:center;
+        flex-wrap:wrap;
+      }
+      .kotn-panel .kotn-field{
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+        flex:1 1 140px;
+        min-width:0;
+      }
+      .kotn-panel .kotn-muted{
+        opacity:0.75;
+      }
+      @media (max-width: 720px){
+        .kotn-panel{
+          max-width:96vw !important;
+          width:min(96vw, 420px) !important;
+          left:2vw !important;
+          right:auto !important;
+        }
+      }
+    `);
+
     const panel = dom.create('div', {
       className: 'kotn-panel',
       style: {
-        position: 'fixed',
         top: '0px',
         left: '0px',
-        minWidth: '220px',
-        maxWidth: '420px',
-        background: '#111',
-        color: '#f5f5f5',
-        fontFamily: 'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
-        fontSize: '12px',
-        borderRadius: '4px',
-        boxShadow: '0 2px 12px rgba(0,0,0,0.35)',
-        padding: '0',
-        zIndex: '999999'
+        minWidth: String(minWidth) + 'px',
+        minHeight: String(minHeight) + 'px',
+        maxWidth: String(maxWidth) + 'px'
       }
     });
+    const titleEl = dom.create('span', {
+      className: 'kotn-panel-title',
+      textContent: title
+    });
+    const headerActions = dom.create('div', {
+      className: 'kotn-panel-header-actions'
+    });
     const header = dom.create('div', {
-      className: 'kotn-panel-header',
-      style: {
-        cursor: 'move',
-        padding: '4px 8px',
-        background: '#222',
-        borderBottom: '1px solid #333',
-        fontWeight: '600',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between'
-      }
+      className: 'kotn-panel-header'
     }, [
-      dom.create('span', { textContent: title })
+      titleEl,
+      headerActions
     ]);
     const body = dom.create('div', {
-      className: 'kotn-panel-body',
-      style: {
-        padding: '6px 8px',
-        maxHeight: '70vh',
-        overflow: 'auto'
-      }
+      className: 'kotn-panel-body'
     });
     panel.appendChild(header);
     panel.appendChild(body);
+    if (cfg.footer) {
+      panel.appendChild(cfg.footer);
+    }
     parent.appendChild(panel);
+
+    function clampPosition(top, left) {
+      const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight - 4);
+      const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth - 4);
+      return {
+        top: Math.max(0, Math.min(maxTop, top)),
+        left: Math.max(0, Math.min(maxLeft, left))
+      };
+    }
+
+    function applyInitialSize() {
+      const stored = rememberSize ? store.get('size') : null;
+      const width = stored && Number.isFinite(stored.width) ? stored.width : defaultSize.width;
+      const height = stored && Number.isFinite(stored.height) ? stored.height : defaultSize.height;
+      if (Number.isFinite(width) && width > 0) {
+        panel.style.width = String(Math.max(minWidth, Math.min(maxWidth, width))) + 'px';
+      }
+      if (Number.isFinite(height) && height > 0) {
+        panel.style.height = String(Math.max(minHeight, height)) + 'px';
+      }
+    }
+
     function applyInitialPosition() {
-      const stored = store ? store.get('pos') : null;
-      let top = defaultPosition.top;
-      let left;
-      if (stored && typeof stored.top === 'number' && typeof stored.left === 'number') {
+      const stored = rememberPosition ? store.get('pos') : null;
+      let top = Number.isFinite(defaultPosition.top) ? defaultPosition.top : 80;
+      let left = 20;
+      if (stored && Number.isFinite(stored.top) && Number.isFinite(stored.left)) {
         top = stored.top;
         left = stored.left;
-      } else if (typeof defaultPosition.left === 'number') {
+      } else if (Number.isFinite(defaultPosition.left)) {
         left = defaultPosition.left;
-      } else if (typeof defaultPosition.right === 'number') {
+      } else if (Number.isFinite(defaultPosition.right)) {
         left = window.innerWidth - defaultPosition.right - panel.offsetWidth;
-      } else {
-        left = 20;
       }
-      panel.style.top = String(Math.max(0, top)) + 'px';
-      panel.style.left = String(Math.max(0, left)) + 'px';
+      const next = clampPosition(top, left);
+      panel.style.top = String(next.top) + 'px';
+      panel.style.left = String(next.left) + 'px';
     }
+
+    function savePosition() {
+      if (!rememberPosition) return;
+      store.set('pos', {
+        top: parseFloat(panel.style.top || '0'),
+        left: parseFloat(panel.style.left || '0')
+      });
+    }
+
+    function saveSize() {
+      if (!rememberSize) return;
+      const rect = panel.getBoundingClientRect();
+      store.set('size', {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      });
+    }
+
+    applyInitialSize();
     applyInitialPosition();
+
     let dragStart = null;
+
     function onPointerDown(ev) {
       if (ev.button !== 0) return;
       const tag = (ev.target && ev.target.tagName || '').toUpperCase();
-      if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+      if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'LABEL') {
         return;
       }
       dragStart = {
@@ -384,54 +762,76 @@
         top: parseFloat(panel.style.top || '0'),
         left: parseFloat(panel.style.left || '0')
       };
-      header.setPointerCapture(ev.pointerId);
+      try {
+        header.setPointerCapture(ev.pointerId);
+      } catch (err) {
+      }
     }
+
     function onPointerMove(ev) {
       if (!dragStart) return;
       const dx = ev.clientX - dragStart.x;
       const dy = ev.clientY - dragStart.y;
-      let newTop = dragStart.top + dy;
-      let newLeft = dragStart.left + dx;
-      const maxTop = window.innerHeight - panel.offsetHeight;
-      const maxLeft = window.innerWidth - panel.offsetWidth;
-      if (maxTop > 0) {
-        newTop = Math.min(Math.max(0, newTop), maxTop);
-      } else {
-        newTop = 0;
-      }
-      if (maxLeft > 0) {
-        newLeft = Math.min(Math.max(0, newLeft), maxLeft);
-      } else {
-        newLeft = 0;
-      }
-      panel.style.top = String(newTop) + 'px';
-      panel.style.left = String(newLeft) + 'px';
+      const next = clampPosition(dragStart.top + dy, dragStart.left + dx);
+      panel.style.top = String(next.top) + 'px';
+      panel.style.left = String(next.left) + 'px';
     }
+
     function onPointerUp(ev) {
       if (!dragStart) return;
-      if (rememberPosition && store) {
-        store.set('pos', {
-          top: parseFloat(panel.style.top || '0'),
-          left: parseFloat(panel.style.left || '0')
-        });
+      try {
+        header.releasePointerCapture(ev.pointerId);
+      } catch (err) {
       }
-      header.releasePointerCapture(ev.pointerId);
       dragStart = null;
+      savePosition();
     }
+
     header.addEventListener('pointerdown', onPointerDown);
     header.addEventListener('pointermove', onPointerMove);
     header.addEventListener('pointerup', onPointerUp);
     header.addEventListener('pointercancel', onPointerUp);
+    window.addEventListener('resize', () => {
+      const next = clampPosition(parseFloat(panel.style.top || '0'), parseFloat(panel.style.left || '0'));
+      panel.style.top = String(next.top) + 'px';
+      panel.style.left = String(next.left) + 'px';
+      savePosition();
+      saveSize();
+    });
+
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(() => {
+        saveSize();
+      });
+      ro.observe(panel);
+    }
+
     return {
       panel,
       header,
+      headerActions,
+      titleEl,
       body,
+      setTitle(nextTitle) {
+        titleEl.textContent = String(nextTitle || '');
+      },
       setPosition(top, left) {
-        panel.style.top = String(top) + 'px';
-        panel.style.left = String(left) + 'px';
-        if (rememberPosition && store) {
-          store.set('pos', { top, left });
+        const next = clampPosition(top, left);
+        panel.style.top = String(next.top) + 'px';
+        panel.style.left = String(next.left) + 'px';
+        savePosition();
+      },
+      setSize(width, height) {
+        if (Number.isFinite(width) && width > 0) {
+          panel.style.width = String(Math.max(minWidth, Math.min(maxWidth, width))) + 'px';
         }
+        if (Number.isFinite(height) && height > 0) {
+          panel.style.height = String(Math.max(minHeight, height)) + 'px';
+        }
+        saveSize();
+      },
+      destroy() {
+        panel.remove();
       }
     };
   }
@@ -648,29 +1048,52 @@
     const className = options.className || 'kotn-activity-log';
     const maxEntries = typeof options.maxEntries === 'number' && options.maxEntries > 0 ? options.maxEntries : 500;
     const store = id ? createStore({ name: 'activity-log:' + id, scope: 'local' }) : null;
+
+    dom.injectStyle('activity-log', `
+      .kotn-activity-log{
+        white-space:pre-wrap;
+        background:#121212;
+        color:#eaeaea;
+        border:1px solid #2e2e2e;
+        border-radius:10px;
+        padding:8px;
+        min-height:64px;
+        max-height:220px;
+        overflow:auto;
+        font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+        font-size:11px;
+        line-height:1.45;
+      }
+    `);
+
     const box = dom.create('div', {
       className
     });
+
     function readStoredLines() {
       if (!store) return [];
       const raw = store.get('lines', []);
       return Array.isArray(raw) ? raw.slice() : [];
     }
+
     function writeStoredLines(lines) {
       if (!store) return;
       store.set('lines', lines.slice());
     }
+
     function render(lines) {
       box.textContent = lines.join('\n');
       box.scrollTop = box.scrollHeight;
     }
+
     let lines = readStoredLines();
     if (lines.length) {
       render(lines);
     }
-    function append(text) {
+
+    function append(level, text) {
       const ts = new Date().toISOString();
-      const line = '[' + ts + '] ' + text;
+      const line = '[' + ts + '] ' + String(level || 'info').toUpperCase() + ' ' + String(text || '');
       lines.push(line);
       if (lines.length > maxEntries) {
         lines = lines.slice(lines.length - maxEntries);
@@ -678,15 +1101,29 @@
       writeStoredLines(lines);
       render(lines);
     }
-    function clear() {
-      lines = [];
-      writeStoredLines(lines);
-      render(lines);
-    }
+
     return {
       box,
-      log: append,
-      clear
+      log(text) {
+        append('info', text);
+      },
+      info(text) {
+        append('info', text);
+      },
+      warn(text) {
+        append('warn', text);
+      },
+      error(text) {
+        append('error', text);
+      },
+      clear() {
+        lines = [];
+        writeStoredLines(lines);
+        render(lines);
+      },
+      getLines() {
+        return lines.slice();
+      }
     };
   }
 
@@ -743,11 +1180,180 @@
     downloadTextFile(filename, 'text/csv;charset=utf-8;', content);
   }
 
+  function makeCsvText(rows, headers, withBom = false) {
+    return (withBom ? '\uFEFF' : '') + rowsToCSV(rows, headers);
+  }
+
+  function countDelimsOutsideQuotes(line, delim) {
+    let count = 0;
+    let inQuotes = false;
+    const text = String(line || '');
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (ch === '"') {
+        if (inQuotes && text[i + 1] === '"') {
+          i += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (!inQuotes && ch === delim) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  function detectDelimiter(text) {
+    const sample = String(text || '').split(/\r?\n/).find(line => String(line || '').trim()) || '';
+    const delimiters = [',', '\t', ';', '|'];
+    let best = ',';
+    let bestCount = -1;
+    delimiters.forEach(delim => {
+      const count = countDelimsOutsideQuotes(sample, delim);
+      if (count > bestCount) {
+        best = delim;
+        bestCount = count;
+      }
+    });
+    return best;
+  }
+
+  function parseDelimited(text, delimiter) {
+    const value = String(text == null ? '' : text);
+    const delim = delimiter || ',';
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let inQuotes = false;
+    for (let i = 0; i < value.length; i += 1) {
+      const ch = value[i];
+      const next = value[i + 1];
+      if (inQuotes) {
+        if (ch === '"' && next === '"') {
+          cell += '"';
+          i += 1;
+        } else if (ch === '"') {
+          inQuotes = false;
+        } else {
+          cell += ch;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inQuotes = true;
+        continue;
+      }
+      if (ch === delim) {
+        row.push(cell);
+        cell = '';
+        continue;
+      }
+      if (ch === '\n') {
+        row.push(cell);
+        rows.push(row);
+        row = [];
+        cell = '';
+        continue;
+      }
+      if (ch === '\r') {
+        continue;
+      }
+      cell += ch;
+    }
+    row.push(cell);
+    if (row.length > 1 || row[0] !== '') {
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  function parseDelimitedTable(text) {
+    const delimiter = detectDelimiter(text);
+    const matrix = parseDelimited(text, delimiter);
+    if (!matrix.length) {
+      return {
+        delimiter,
+        headers: [],
+        rows: []
+      };
+    }
+    const headers = (matrix[0] || []).map(v => String(v == null ? '' : v));
+    const rows = matrix.slice(1);
+    return {
+      delimiter,
+      headers,
+      rows,
+      toObjects() {
+        return rows.map(row => {
+          const obj = {};
+          headers.forEach((header, index) => {
+            obj[header] = row[index] == null ? '' : row[index];
+          });
+          return obj;
+        });
+      }
+    };
+  }
+
   KOTN.csv = {
     escapeCell,
     rowsToCSV,
+    makeCsvText,
     downloadCSV,
-    downloadTextFile
+    downloadTextFile,
+    detectDelimiter,
+    parseDelimited,
+    parseDelimitedTable,
+    headersFromRows(rows) {
+      const list = Array.isArray(rows) ? rows : [];
+      const set = new Set();
+      list.forEach(row => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) return;
+        Object.keys(row).forEach(key => set.add(key));
+      });
+      return Array.from(set);
+    }
+  };
+
+  // ============================================================
+  // Clipboard Helpers
+  // ============================================================
+
+  async function copyText(value) {
+    const text = String(value == null ? '' : value);
+    if (!text) return false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (err) {
+    }
+    try {
+      const ta = dom.create('textarea', {
+        value: text,
+        style: {
+          position: 'fixed',
+          left: '-9999px',
+          top: '0'
+        }
+      });
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  KOTN.clipboard = {
+    copyText,
+    async copyRowsAsCSV(rows, headers, withBom = false) {
+      return copyText(makeCsvText(rows, headers, withBom));
+    }
   };
 
   // ============================================================
@@ -1298,7 +1904,56 @@
     buildAppHeaders,
     csrfFetch,
     fetchJSON,
-    requestJSON
+    async fetchText(input, init = {}) {
+      const res = await csrfFetch(input, init);
+      return res.text();
+    },
+    async fetchHTML(input, init = {}) {
+      const html = await this.fetchText(input, init);
+      return new DOMParser().parseFromString(String(html || ''), 'text/html');
+    },
+    requestJSON,
+    async requestText(input, options = {}) {
+      const url = String(input || '');
+      const method = String(options.method || 'GET').toUpperCase();
+      const body = options.body;
+      const hasBody = body !== undefined && body !== null && method !== 'GET' && method !== 'HEAD';
+
+      const built = buildAppHeaders({
+        json: options.json,
+        hasBody,
+        includeAuth: options.includeAuth,
+        includeCSRF: options.includeCSRF,
+        includeXSRF: options.includeXSRF,
+        includeSocketId: options.includeSocketId,
+        requestedWith: options.requestedWith,
+        accept: options.accept || 'text/html,application/json,text/plain,*/*',
+        headers: options.headers,
+        authTokenOverride: options.authTokenOverride
+      });
+
+      const init = {
+        method,
+        credentials: options.credentials || 'same-origin',
+        headers: built.headers
+      };
+
+      if (hasBody) {
+        init.body = typeof body === 'string' ? body : JSON.stringify(body);
+      }
+
+      const res = await fetch(url, init);
+      const text = await res.text();
+      if (!res.ok) {
+        const err = new Error('requestText: HTTP ' + res.status + ' for ' + url);
+        err.status = res.status;
+        err.url = url;
+        err.bodyText = text;
+        err.diag = built.diag;
+        throw err;
+      }
+      return text;
+    }
   };
 
   // ============================================================
@@ -2114,19 +2769,35 @@
       createdBy: '',
       createdByRaw: '',
       createdAtText: '',
+      skuText: '',
+      skuCore: '',
+      copiedFrom: '',
       isDraft: false,
       toBeCleared: false,
       isPublic: false,
-      imageCount: 0
+      imageCount: 0,
+      imageTitles: [],
+      imageUrls: []
     };
     const createdRow = doc.querySelector('.form-group.row span.col-form-label');
     if (createdRow && createdRow.textContent && dom.norm(createdRow.textContent).toLowerCase() === 'created by') {
-      const input = createdRow.parentElement && createdRow.parentElement.querySelector('.input-group input[disabled][type="text"]');
+      const row = createdRow.parentElement;
+      const input = row && row.querySelector('.input-group input[disabled][type="text"]');
       if (input && input.value) {
         data.createdBy = input.value;
         data.createdByRaw = input.value;
       }
+      const small = row && row.querySelector('.small, .text-muted');
+      if (small && small.textContent) {
+        data.createdAtText = dom.norm(small.textContent);
+      }
     }
+    const skuValueEl = doc.querySelector('.sku .value');
+    if (skuValueEl && skuValueEl.textContent) {
+      data.skuText = dom.norm(skuValueEl.textContent);
+      data.skuCore = dom.norm((data.skuText.split('-')[0] || data.skuText).trim());
+    }
+
     const auctionHiddenId = doc.querySelector('input[name="auction_id"]');
     if (auctionHiddenId && auctionHiddenId.value) {
       data.auctionId = String(auctionHiddenId.value);
@@ -2153,6 +2824,10 @@
     const urlInput = doc.querySelector('input[name="url"]');
     if (urlInput && urlInput.value) {
       data.productUrl = urlInput.value;
+    }
+    const copiedFromInput = doc.querySelector('input[name="copied_from"]');
+    if (copiedFromInput && copiedFromInput.value) {
+      data.copiedFrom = String(copiedFromInput.value);
     }
     const cat1Button = doc.querySelector('.cat-1-button');
     if (cat1Button && cat1Button.textContent) {
@@ -2206,6 +2881,14 @@
     if (imageCountInput && imageCountInput.value) {
       const n = parseInt(String(imageCountInput.value), 10);
       data.imageCount = Number.isFinite(n) ? n : 0;
+    }
+    const images = Array.from(doc.querySelectorAll('.image-upload-grid img[src]'));
+    if (images.length) {
+      data.imageUrls = images.map(img => img.getAttribute('src') || '').filter(Boolean);
+      data.imageTitles = images.map(img => img.getAttribute('title') || '').filter(Boolean);
+      if (!data.imageCount) {
+        data.imageCount = images.length;
+      }
     }
     const draftCheckbox = doc.querySelector('input[name="is_draft"]');
     if (draftCheckbox) {
@@ -2282,4 +2965,140 @@
     loadFromEdit: loadListingFromEdit,
     collectIdsFromIndex: collectListingIdsFromIndex
   };
+
+  // ============================================================
+  // Listing Operation Helpers
+  // ============================================================
+
+  function normalizeListingId(value) {
+    const match = String(value == null ? '' : value).match(/\d+/);
+    return match ? match[0] : '';
+  }
+
+  function getListingIdFromPath(pathname) {
+    const match = String(pathname || '').match(/\/management\/listings\/(\d+)(?:\/|$)/i);
+    return match ? match[1] : '';
+  }
+
+  function listingUrl(id, suffix) {
+    const listingId = normalizeListingId(id);
+    if (!listingId) {
+      throw new Error('listingUrl requires a listing id');
+    }
+    return '/management/listings/' + encodeURIComponent(listingId) + (suffix || '');
+  }
+
+  async function getManagementModalDetails(id, options = {}) {
+    return KOTN.http.requestJSON(listingUrl(id, '/management-modal-details'), {
+      method: 'GET',
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  async function updateInventory(id, payload, options = {}) {
+    return KOTN.http.requestJSON(listingUrl(id, '/update-inventory'), {
+      method: 'PATCH',
+      body: payload || {},
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  async function deleteListing(id, payload, options = {}) {
+    if (options.prefetchModalDetails) {
+      try {
+        await getManagementModalDetails(id, options);
+      } catch (err) {
+      }
+    }
+    return KOTN.http.requestJSON(listingUrl(id, '/delete'), {
+      method: 'POST',
+      body: payload || {},
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  async function updateCreator(id, creatorUsername, options = {}) {
+    if (options.prefetchModalDetails) {
+      try {
+        await getManagementModalDetails(id, options);
+      } catch (err) {
+      }
+    }
+    return KOTN.http.requestJSON(listingUrl(id, '/update-creator'), {
+      method: 'POST',
+      body: {
+        creator_username: dom.norm(creatorUsername || '')
+      },
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  async function updateShelf(id, shelfName, options = {}) {
+    if (options.prefetchModalDetails) {
+      try {
+        await getManagementModalDetails(id, options);
+      } catch (err) {
+      }
+    }
+    return KOTN.http.requestJSON(listingUrl(id, '/update-shelf'), {
+      method: 'POST',
+      body: {
+        shelf_name: dom.norm(shelfName || '')
+      },
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  async function removeBids(id, reason, options = {}) {
+    if (options.prefetchModalDetails) {
+      try {
+        await getManagementModalDetails(id, options);
+      } catch (err) {
+      }
+    }
+    return KOTN.http.requestJSON(listingUrl(id, '/remove-bids'), {
+      method: 'POST',
+      body: {
+        reason: String(reason == null ? '' : reason)
+      },
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  async function setPublicState(id, value, options = {}) {
+    const isPublic = !!value;
+    const body = {
+      value: isPublic
+    };
+    if (!isPublic) {
+      const reason = dom.norm(options.reason || '') || 'not public';
+      body.reason = reason;
+    }
+    return KOTN.http.requestJSON(listingUrl(id, '/public'), {
+      method: 'PATCH',
+      body,
+      authTokenOverride: options.authTokenOverride,
+      headers: options.headers
+    });
+  }
+
+  KOTN.listingOps = {
+    normalizeListingId,
+    getListingIdFromPath,
+    listingUrl,
+    getManagementModalDetails,
+    updateInventory,
+    deleteListing,
+    updateCreator,
+    updateShelf,
+    removeBids,
+    setPublicState
+  };
+
 })();
