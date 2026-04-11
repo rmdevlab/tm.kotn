@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v1.3.0
+// v1.3.1
 
 (function () {
   'use strict';
@@ -1703,19 +1703,64 @@
     }
   }
 
+  function getWindowCandidates() {
+    const list = [];
+    try {
+      const scriptWindow = getScriptWindow();
+      if (scriptWindow) list.push(scriptWindow);
+    } catch (err) {
+    }
+    if (typeof window !== 'undefined' && window && !list.includes(window)) {
+      list.push(window);
+    }
+    return list;
+  }
+
+  function getAxiosCandidate(root) {
+    if (!root) return null;
+    const candidates = [
+      root.axios,
+      safeGet(root, 'app.axios'),
+      safeGet(root, '__app.axios'),
+      safeGet(root, 'Laravel.axios')
+    ].filter(Boolean);
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      if (candidate && typeof candidate.request === 'function') return candidate;
+      if (typeof candidate === 'function') return candidate;
+    }
+    return null;
+  }
+
+  function getAppAxios() {
+    const windows = getWindowCandidates();
+    for (let i = 0; i < windows.length; i += 1) {
+      const candidate = getAxiosCandidate(windows[i]);
+      if (candidate) return candidate;
+    }
+    return null;
+  }
+
   function discoverAuthorizationToken(options = {}) {
     const override = dom.norm(options.authTokenOverride || '');
     if (override) return override;
 
-    const ax = window.axios;
-    const a1 = safeGet(ax, 'defaults.headers.common.authorization');
-    if (typeof a1 === 'string' && a1.trim()) return a1.trim();
-    const a2 = safeGet(ax, 'defaults.headers.common.Authorization');
-    if (typeof a2 === 'string' && a2.trim()) return a2.trim();
-    const a3 = safeGet(ax, 'defaults.headers.authorization');
-    if (typeof a3 === 'string' && a3.trim()) return a3.trim();
-    const a4 = safeGet(ax, 'defaults.headers.Authorization');
-    if (typeof a4 === 'string' && a4.trim()) return a4.trim();
+    const windows = getWindowCandidates();
+    const headerPaths = [
+      'defaults.headers.common.authorization',
+      'defaults.headers.common.Authorization',
+      'defaults.headers.authorization',
+      'defaults.headers.Authorization'
+    ];
+
+    for (let i = 0; i < windows.length; i += 1) {
+      const ax = getAxiosCandidate(windows[i]);
+      if (!ax) continue;
+      for (let j = 0; j < headerPaths.length; j += 1) {
+        const value = safeGet(ax, headerPaths[j]);
+        if (typeof value === 'string' && value.trim()) return value.trim();
+      }
+    }
 
     const keys = [
       'authorization',
@@ -1728,17 +1773,20 @@
       'token'
     ];
 
-    for (let i = 0; i < keys.length; i += 1) {
-      const k = keys[i];
-      try {
-        const v = window.localStorage ? window.localStorage.getItem(k) : null;
-        if (typeof v === 'string' && v.trim()) return v.trim();
-      } catch (err) {
-      }
-      try {
-        const v2 = window.sessionStorage ? window.sessionStorage.getItem(k) : null;
-        if (typeof v2 === 'string' && v2.trim()) return v2.trim();
-      } catch (err) {
+    for (let i = 0; i < windows.length; i += 1) {
+      const w = windows[i];
+      for (let j = 0; j < keys.length; j += 1) {
+        const k = keys[j];
+        try {
+          const v = w.localStorage ? w.localStorage.getItem(k) : null;
+          if (typeof v === 'string' && v.trim()) return v.trim();
+        } catch (err) {
+        }
+        try {
+          const v2 = w.sessionStorage ? w.sessionStorage.getItem(k) : null;
+          if (typeof v2 === 'string' && v2.trim()) return v2.trim();
+        } catch (err) {
+        }
       }
     }
 
@@ -1778,7 +1826,6 @@
       csrf = getCSRFToken() || '';
       if (csrf) {
         headers['x-csrf-token'] = csrf;
-        headers['X-CSRF-TOKEN'] = csrf;
       }
     }
 
@@ -1787,7 +1834,6 @@
       xsrf = getXSRFToken() || '';
       if (xsrf) {
         headers['x-xsrf-token'] = xsrf;
-        headers['X-XSRF-TOKEN'] = xsrf;
       }
     }
 
@@ -1817,18 +1863,32 @@
 
   async function csrfFetch(input, init = {}) {
     const options = Object.assign({}, init);
-    const headers = new Headers(options.headers || {});
-    const csrf = getCSRFToken();
-    if (csrf && !headers.has('X-CSRF-TOKEN')) {
-      headers.set('X-CSRF-TOKEN', csrf);
-    }
-    if (!headers.has('X-Requested-With')) {
-      headers.set('X-Requested-With', 'XMLHttpRequest');
-    }
+    const method = String(options.method || 'GET').toUpperCase();
+    const hasBody = options.body !== undefined && options.body !== null && method !== 'GET' && method !== 'HEAD';
+    const explicitHeaders = new Headers(options.headers || {});
+    const accept = explicitHeaders.get('accept') || explicitHeaders.get('Accept') || '*/*';
+    const built = buildAppHeaders({
+      json: false,
+      hasBody,
+      accept,
+      headers: {},
+      authTokenOverride: options.authTokenOverride
+    });
+    const headers = new Headers(built.headers || {});
+    explicitHeaders.forEach((value, key) => {
+      headers.set(key, value);
+    });
     options.headers = headers;
+    if (!options.credentials) {
+      options.credentials = 'same-origin';
+    }
     const res = await fetch(input, options);
     if (!res.ok) {
-      throw new Error('csrfFetch: HTTP ' + res.status + ' for ' + input);
+      const err = new Error('csrfFetch: HTTP ' + res.status + ' for ' + input);
+      err.status = res.status;
+      err.url = String(input || '');
+      err.diag = built.diag;
+      throw err;
     }
     return res;
   }
@@ -1856,6 +1916,44 @@
       headers: options.headers,
       authTokenOverride: options.authTokenOverride
     });
+
+    const axiosClient = getAppAxios();
+    if (axiosClient) {
+      try {
+        const config = {
+          url,
+          method: method.toLowerCase(),
+          headers: built.headers,
+          withCredentials: options.credentials !== 'omit',
+          responseType: 'json',
+          validateStatus: function () {
+            return true;
+          }
+        };
+        if (hasBody) {
+          config.data = body;
+        }
+        const response = typeof axiosClient.request === 'function'
+          ? await axiosClient.request(config)
+          : await axiosClient(config);
+        const status = Number(response && response.status) || 0;
+        const json = response && response.data !== undefined ? response.data : null;
+        if (status < 200 || status >= 300) {
+          const err = new Error('requestJSON: HTTP ' + status + ' for ' + url);
+          err.status = status;
+          err.url = url;
+          err.bodyText = typeof json === 'string' ? json : JSON.stringify(json || null);
+          err.bodyJson = json;
+          err.diag = built.diag;
+          throw err;
+        }
+        return json;
+      } catch (err) {
+        if (err && err.status) {
+          throw err;
+        }
+      }
+    }
 
     const init = {
       method,
