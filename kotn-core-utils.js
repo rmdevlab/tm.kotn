@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v1.3.1
+// v1.3.2
 
 (function () {
   'use strict';
@@ -2556,21 +2556,65 @@
     });
   }
 
-  function parseSavedNewSku(doc) {
-    try {
-      const val = doc.querySelector('.sku .value');
-      const links = val ? val.querySelectorAll('a.kotn-sku-link') : null;
-      if (links && links.length) {
-        const last = links[links.length - 1];
-        return dom.norm(last.textContent || '');
-      }
-      const text = dom.norm(doc && doc.body && doc.body.textContent || '');
-      const m = text.match(/New SKU:\s*([A-Z]+\d+-\d+)/i);
-      return m ? m[1] : '';
-    } catch (err) {
-      return '';
+function parseSavedNewSku(doc, expectedPrefix) {
+  try {
+    const expected = dom.norm(expectedPrefix || '').toUpperCase();
+    const expectedNeedle = expected ? expected + '-' : '';
+    const candidates = [];
+
+    function collect(text) {
+      const matches = String(text == null ? '' : text).toUpperCase().match(/\b[A-Z]+[A-Z0-9]*-\d+\b/g);
+      if (!matches) return;
+      matches.forEach(sku => {
+        const value = dom.norm(sku);
+        if (!value) return;
+        if (candidates.indexOf(value) === -1) {
+          candidates.push(value);
+        }
+      });
     }
+
+    const valueEl = doc.querySelector('.sku .value');
+    if (valueEl) {
+      Array.from(valueEl.querySelectorAll('a.kotn-sku-link')).forEach(function(link) {
+        collect(link.textContent || '');
+      });
+      collect(valueEl.textContent || '');
+    }
+
+    Array.from(doc.querySelectorAll('a.kotn-sku-link')).forEach(function(link) {
+      collect(link.textContent || '');
+    });
+
+    const usable = expectedNeedle
+      ? candidates.filter(function(sku) {
+          return sku.indexOf(expectedNeedle) === 0;
+        })
+      : candidates;
+
+    if (usable.length) {
+      return usable[0];
+    }
+
+    const bodyText = dom.norm(doc && doc.body && doc.body.textContent || '');
+    const bodyMatches = String(bodyText).toUpperCase().match(/\b[A-Z]+[A-Z0-9]*-\d+\b/g) || [];
+    const bodyCandidates = Array.from(new Set(bodyMatches.map(function(sku) {
+      return dom.norm(sku);
+    }).filter(Boolean)));
+
+    if (expectedNeedle) {
+      const prefixed = bodyCandidates.filter(function(sku) {
+        return sku.indexOf(expectedNeedle) === 0;
+      });
+      return prefixed[0] || '';
+    }
+
+    return bodyCandidates[0] || '';
+  } catch (err) {
+    return '';
   }
+}
+
 
   async function reassignOneSku(listingId, targetShelf, options = {}) {
     if (!listingId) {
@@ -2604,7 +2648,7 @@
     submit.click();
     await nextLoad;
     const savedDoc = iframe.contentDocument;
-    const newSku = parseSavedNewSku(savedDoc);
+    const newSku = parseSavedNewSku(savedDoc, shelf);
     return {
       listingId: idStr,
       targetShelf: shelf,
@@ -2711,7 +2755,7 @@
       timeoutMs: 15000
     });
     const doc = frame.document;
-    const newSku = parseSavedNewSku(doc) || '';
+    const newSku = parseSavedNewSku(doc, shelf) || '';
     const images = Array.from(doc.querySelectorAll('.image-upload-grid img[src]')).map(img => img.src).filter(Boolean);
     return {
       listingId: idStr,
