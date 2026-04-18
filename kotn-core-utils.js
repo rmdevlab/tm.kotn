@@ -1,5 +1,5 @@
 // KOTN Core Utilities
-// v1.3.2
+// v1.3.3
 
 (function () {
   'use strict';
@@ -971,56 +971,85 @@
       mini.style.display = on ? 'inline-flex' : 'none';
       store.set('collapsed', !!on);
     }
-    (function makeMiniDraggable() {
-      function clamp(v, lo, hi) {
-        return Math.max(lo, Math.min(hi, v));
-      }
-      let dragging = false;
-      let sx = 0;
-      let sy = 0;
-      let ox = 0;
-      let oy = 0;
-      function onDown(e) {
-        if (e.type === 'mousedown' && e.button !== 0) return;
-        const pt = e.touches ? e.touches[0] : e;
-        const r = mini.getBoundingClientRect();
-        dragging = true;
-        sx = pt.clientX;
-        sy = pt.clientY;
-        ox = r.left;
-        oy = r.top;
-        mini.style.right = 'auto';
-        e.preventDefault();
-      }
-      function onMove(e) {
-        if (!dragging) return;
-        const pt = e.touches ? e.touches[0] : e;
-        const dx = pt.clientX - sx;
-        const dy = pt.clientY - sy;
-        const left = clamp(ox + dx, 8, window.innerWidth - mini.offsetWidth - 8);
-        const top = clamp(oy + dy, 8, window.innerHeight - mini.offsetHeight - 8);
-        mini.style.left = String(left) + 'px';
-        mini.style.top = String(top) + 'px';
-      }
-      function onUp() {
-        if (!dragging) return;
-        dragging = false;
-        try {
-          const r = mini.getBoundingClientRect();
-          store.set('miniPos', {
-            left: Math.round(r.left),
-            top: Math.round(r.top)
-          });
-        } catch (err) {
-        }
-      }
-      mini.addEventListener('mousedown', onDown);
-      mini.addEventListener('touchstart', onDown, { passive: false });
-      window.addEventListener('mousemove', onMove);
-      window.addEventListener('touchmove', onMove, { passive: false });
-      window.addEventListener('mouseup', onUp);
-      window.addEventListener('touchend', onUp);
-    })();
+   (function makeMiniDraggable() {
+  function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+  }
+
+  const DRAG_THRESHOLD = 6;
+
+  let dragging = false;
+  let moved = false;
+  let sx = 0;
+  let sy = 0;
+  let ox = 0;
+  let oy = 0;
+
+  mini.style.touchAction = 'manipulation';
+
+  function onDown(e) {
+    if (e.type === 'mousedown' && e.button !== 0) return;
+    const pt = e.touches ? e.touches[0] : e;
+    const r = mini.getBoundingClientRect();
+    dragging = true;
+    moved = false;
+    sx = pt.clientX;
+    sy = pt.clientY;
+    ox = r.left;
+    oy = r.top;
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    const pt = e.touches ? e.touches[0] : e;
+    const dx = pt.clientX - sx;
+    const dy = pt.clientY - sy;
+
+    if (!moved && Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) {
+      return;
+    }
+
+    moved = true;
+    mini.style.right = 'auto';
+
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+
+    const left = clamp(ox + dx, 8, window.innerWidth - mini.offsetWidth - 8);
+    const top = clamp(oy + dy, 8, window.innerHeight - mini.offsetHeight - 8);
+    mini.style.left = String(left) + 'px';
+    mini.style.top = String(top) + 'px';
+  }
+
+  function onUp() {
+    if (!dragging) return;
+    const wasMoved = moved;
+    dragging = false;
+    moved = false;
+
+    if (!wasMoved) {
+      return;
+    }
+
+    try {
+      const r = mini.getBoundingClientRect();
+      store.set('miniPos', {
+        left: Math.round(r.left),
+        top: Math.round(r.top)
+      });
+    } catch (err) {
+    }
+  }
+
+  mini.addEventListener('mousedown', onDown);
+  mini.addEventListener('touchstart', onDown, { passive: true });
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('touchmove', onMove, { passive: false });
+  window.addEventListener('mouseup', onUp);
+  window.addEventListener('touchend', onUp);
+  window.addEventListener('touchcancel', onUp);
+})();
     btn.addEventListener('click', () => setCollapsed(true));
     mini.addEventListener('click', () => setCollapsed(false));
     return {
