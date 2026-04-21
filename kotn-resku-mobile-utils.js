@@ -1,5 +1,5 @@
 // KOTN ReSKU Mobile Utilities
-// v0.1.0
+// v0.2.0
 
 (function () {
   'use strict';
@@ -10,10 +10,10 @@
   // Config
   // ============================================================
 
-  const GRID_URL = '/management/shelves/grid';
-  const GRID_GROUP_SWITCH_DELAY_MS = 140;
-  const GRID_LOAD_TIMEOUT_MS = 15000;
+  const INVENTORY_PATH = '/management/shelves/inventory';
+  const DEFAULT_PRESENT_ONLY = true;
   const DEFAULT_PAGE_SIZE = 100;
+  const DEFAULT_MAX_PAGES = 50;
 
   // ============================================================
   // Core References
@@ -21,7 +21,6 @@
 
   const dom = KOTN.dom || {};
   const asyncUtils = KOTN.async || {};
-  const shelves = KOTN.shelves || {};
 
   // ============================================================
   // Helpers
@@ -53,27 +52,6 @@
     });
   }
 
-  function toAbsoluteUrl(raw) {
-    const value = norm(raw || '');
-    if (!value) return '';
-    try {
-      return new URL(value, window.location.origin).toString();
-    } catch (err) {
-      return '';
-    }
-  }
-
-  function uniq(values) {
-    return Array.from(new Set((Array.isArray(values) ? values : []).filter(Boolean)));
-  }
-
-  function compareNatural(a, b) {
-    return String(a || '').localeCompare(String(b || ''), undefined, {
-      numeric: true,
-      sensitivity: 'base'
-    });
-  }
-
   function getAbortError() {
     try {
       return new DOMException('Aborted', 'AbortError');
@@ -90,471 +68,123 @@
     }
   }
 
-  // ============================================================
-  // Hidden Grid Frame
-  // ============================================================
-
-  let gridFrame = null;
-  let gridFrameUrl = '';
-  const inventoryUrlCache = new Map();
-
-  function getGridFrame() {
-    if (gridFrame && document.body.contains(gridFrame)) {
-      return gridFrame;
-    }
-    const iframe = document.createElement('iframe');
-    iframe.id = 'kotn-resku-mobile-grid-frame';
-    iframe.style.position = 'fixed';
-    iframe.style.left = '-9999px';
-    iframe.style.bottom = '0';
-    iframe.style.width = '1px';
-    iframe.style.height = '1px';
-    iframe.style.border = '0';
-    iframe.style.opacity = '0';
-    iframe.style.pointerEvents = 'none';
-    iframe.setAttribute('aria-hidden', 'true');
-    document.body.appendChild(iframe);
-    gridFrame = iframe;
-    return iframe;
+  function uniq(values) {
+    return Array.from(new Set((Array.isArray(values) ? values : []).filter(Boolean)));
   }
 
-  function waitForFrameLoad(frame, url, timeoutMs) {
-    const limit = timeoutMs == null ? GRID_LOAD_TIMEOUT_MS : timeoutMs;
-    return new Promise(function (resolve, reject) {
-      let done = false;
-      function cleanup() {
-        frame.removeEventListener('load', onLoad);
-        clearTimeout(timer);
-      }
-      function onLoad() {
-        if (done) return;
-        done = true;
-        cleanup();
-        resolve({
-          frame: frame,
-          win: frame.contentWindow || null,
-          doc: frame.contentDocument || null
-        });
-      }
-      const timer = setTimeout(function () {
-        if (done) return;
-        done = true;
-        cleanup();
-        reject(new Error('Grid frame load timeout for ' + url));
-      }, limit);
-      frame.addEventListener('load', onLoad);
-      frame.src = url;
+  function compareNatural(a, b) {
+    return String(a || '').localeCompare(String(b || ''), undefined, {
+      numeric: true,
+      sensitivity: 'base'
     });
   }
 
-  function isGridFrameLoaded(frame, url) {
-    if (!frame || !frame.contentDocument || !frame.contentWindow) return false;
-    if (gridFrameUrl !== url) return false;
-    try {
-      return String(frame.contentWindow.location.pathname || '').indexOf('/management/shelves/grid') === 0;
-    } catch (err) {
-      return false;
-    }
+  function sanitizeFilePart(value, fallback) {
+    const cleaned = String(value || '')
+      .trim()
+      .replace(/[^a-z0-9]+/gi, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase();
+    return cleaned || String(fallback || 'file');
   }
 
-  async function ensureGridFrame(options) {
+  function base64ToUint8Array(base64) {
+    const binary = window.atob(String(base64 || ''));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  function downloadBlobFile(filename, blob) {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = String(filename || 'download');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(function () {
+      window.URL.revokeObjectURL(url);
+    }, 1500);
+  }
+
+  function parseSkuSortParts(value) {
+    const raw = upper(value || '');
+    const match = raw.match(/^(.*?)-(\d+)$/);
+    return {
+      label: match ? match[1] : raw,
+      position: match ? parseInt(match[2], 10) : Number.MAX_SAFE_INTEGER,
+      raw: raw
+    };
+  }
+
+  function compareEntriesForExport(a, b) {
+    const aSku = parseSkuSortParts(a && a.oldSku || '');
+    const bSku = parseSkuSortParts(b && b.oldSku || '');
+    const labelCmp = compareNatural(aSku.label, bSku.label);
+    if (labelCmp) return labelCmp;
+    if (aSku.position !== bSku.position) return aSku.position - bSku.position;
+    const aTs = Number(a && a.ts || 0);
+    const bTs = Number(b && b.ts || 0);
+    if (aTs !== bTs) return aTs - bTs;
+    return compareNatural(a && a.id || '', b && b.id || '');
+  }
+
+  // ============================================================
+  // Inventory URL Builder
+  // ============================================================
+
+  function buildInventoryUrlForShelf(shelfName, options) {
     const cfg = options || {};
-    const force = !!cfg.force;
-    const url = cfg.url || GRID_URL;
-    const frame = getGridFrame();
-    if (!force && isGridFrameLoaded(frame, url)) {
-      return {
-        frame: frame,
-        win: frame.contentWindow,
-        doc: frame.contentDocument
-      };
+    const shelf = norm(shelfName || '');
+    if (!shelf) return '';
+    const url = new URL(INVENTORY_PATH, window.location.origin);
+    url.searchParams.set('sku', shelf);
+    if (cfg.isPresent === false) {
+      url.searchParams.delete('is_present');
+    } else if (cfg.isPresent || cfg.isPresent == null) {
+      url.searchParams.set('is_present', 'true');
     }
-    const loaded = await waitForFrameLoad(frame, url, cfg.timeoutMs);
-    gridFrameUrl = url;
-    return loaded;
-  }
-
-  // ============================================================
-  // Shelf Discovery
-  // ============================================================
-
-  function isShelfNameToken(value) {
-    return /^[A-Z]+\d+[A-Z]*$/.test(upper(value || ''));
-  }
-
-  function extractInventoryUrlFromElement(el) {
-    if (!el || !(el instanceof Element)) return '';
-    const attrs = [
-      'href',
-      'data-href',
-      'data-url',
-      'data-target',
-      'data-target-url',
-      'data-link',
-      'data-path'
-    ];
-    for (let i = 0; i < attrs.length; i += 1) {
-      const raw = el.getAttribute(attrs[i]) || '';
-      if (raw.indexOf('/management/shelves/inventory') !== -1) {
-        return toAbsoluteUrl(raw);
-      }
+    if (cfg.pageSize) {
+      url.searchParams.set('per_page', String(cfg.pageSize));
     }
-    const onclick = el.getAttribute('onclick') || '';
-    if (onclick.indexOf('/management/shelves/inventory') !== -1) {
-      const match = onclick.match(/(["'`])([^"'`]*\/management\/shelves\/inventory[^"'`]*)\1/);
-      if (match && match[2]) {
-        return toAbsoluteUrl(match[2]);
-      }
+    if (cfg.page && Number(cfg.page) > 1) {
+      url.searchParams.set('page', String(cfg.page));
     }
-    return '';
-  }
-
-  function collectShelfTokensFromText(text) {
-    const matches = upper(text || '').match(/\b[A-Z]+\d+[A-Z]*\b/g) || [];
-    return Array.from(new Set(matches.map(function (value) {
-      return norm(value);
-    }).filter(Boolean)));
-  }
-
-  function findShelfNameNearElement(el) {
-    if (!el) return '';
-    const seen = new Set();
-    const tokens = [];
-
-    function addText(value) {
-      collectShelfTokensFromText(value).forEach(function (token) {
-        if (seen.has(token)) return;
-        seen.add(token);
-        tokens.push(token);
-      });
-    }
-
-    addText(el.getAttribute('data-shelf') || '');
-    addText(el.getAttribute('title') || '');
-    addText(el.textContent || '');
-
-    let node = el;
-    let depth = 0;
-    while (node && depth < 4) {
-      addText(node.textContent || '');
-      Array.from(node.children || []).forEach(function (child) {
-        addText(child.textContent || '');
-      });
-      node = node.parentElement;
-      depth += 1;
-    }
-
-    return tokens[0] || '';
-  }
-
-  function parseClassicShelfDirectoryFromDoc(doc) {
-    const grid = doc.querySelector('.shelf-grid');
-    if (!grid) return [];
-    return qsa('.shelf-grid-item', grid).map(function (item) {
-      const countLink = item.querySelector('.shelf-count[href]');
-      const nameEl = item.querySelector('.shelf-name a,.shelf-name');
-      const shelf = norm(nameEl && nameEl.textContent || '');
-      const href = countLink && countLink.getAttribute('href')
-        ? new URL(countLink.getAttribute('href'), window.location.origin).toString()
-        : '';
-      const countLabel = norm(countLink && countLink.textContent || '');
-      if (!shelf) return null;
-      return {
-        shelf: shelf,
-        key: upper(shelf),
-        url: href,
-        countLabel: countLabel
-      };
-    }).filter(Boolean).sort(function (a, b) {
-      return compareNatural(a.shelf, b.shelf);
-    });
-  }
-
-  function harvestVisibleShelfEntries(root) {
-    const map = new Map();
-
-    function upsert(entry) {
-      if (!entry || !entry.shelf) return;
-      const key = upper(entry.shelf);
-      const existing = map.get(key);
-      if (!existing) {
-        map.set(key, {
-          shelf: entry.shelf,
-          key: key,
-          url: entry.url || '',
-          countLabel: entry.countLabel || ''
-        });
-        return;
-      }
-      if (!existing.url && entry.url) {
-        existing.url = entry.url;
-      }
-      if (!existing.countLabel && entry.countLabel) {
-        existing.countLabel = entry.countLabel;
-      }
-    }
-
-    parseClassicShelfDirectoryFromDoc(root).forEach(upsert);
-
-    qsa('a[href*="/management/shelves/inventory"],[data-href*="/management/shelves/inventory"],[onclick*="/management/shelves/inventory"]', root).forEach(function (el) {
-      const url = extractInventoryUrlFromElement(el);
-      const shelf = findShelfNameNearElement(el);
-      if (!shelf) return;
-      upsert({
-        shelf: shelf,
-        url: url,
-        countLabel: norm(el.textContent || '')
-      });
-    });
-
-    qsa('button,a,.btn,.tab,[role="button"]', root).forEach(function (el) {
-      const shelf = upper(el.textContent || '');
-      if (!isShelfNameToken(shelf)) return;
-      const url = extractInventoryUrlFromElement(el)
-        || extractInventoryUrlFromElement(el.parentElement)
-        || extractInventoryUrlFromElement(el.closest('div,li,tr,td,section,article'))
-        || '';
-      upsert({
-        shelf: shelf,
-        url: url,
-        countLabel: norm(el.textContent || '')
-      });
-    });
-
-    const out = Array.from(map.values()).sort(function (a, b) {
-      return compareNatural(a.shelf, b.shelf);
-    });
-
-    out.forEach(function (entry) {
-      if (entry.url) {
-        inventoryUrlCache.set(entry.key, entry.url);
-      }
-    });
-
-    return out;
-  }
-
-  function getHarvestGroupButtons(root) {
-    const ignore = new Set(['SCOPE', 'OA', 'RESKU', 'FULL', 'CLAIMED', 'NOTCLAIMABLE', 'ASSIGNED', 'OK']);
-    const out = [];
-    const seen = new Set();
-    qsa('button,a,.btn,.tab,[role="button"]', root).forEach(function (el) {
-      const text = upper(el.textContent || '');
-      if (!text) return;
-      if (ignore.has(text)) return;
-      if (isShelfNameToken(text)) return;
-      if (!/^[A-Z@]+$/.test(text)) return;
-      if (text.length > 12) return;
-      const key = text + '|' + (el.className || '');
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(el);
-    });
-    return out;
-  }
-
-  function findGroupButton(doc, prefix) {
-    const wanted = upper(prefix || '');
-    const buttons = getHarvestGroupButtons(doc);
-    return buttons.find(function (el) {
-      return upper(el.textContent || '') === wanted;
-    }) || null;
-  }
-
-  async function safeTriggerHarvestButton(button, options) {
-    const cfg = options || {};
-    const delayMs = cfg.delayMs == null ? GRID_GROUP_SWITCH_DELAY_MS : cfg.delayMs;
-    const signal = cfg.signal || null;
-
-    if (!button || !(button instanceof Element)) return;
-
-    const restores = [];
-    const tag = String(button.tagName || '').toUpperCase();
-    const form = button.form || button.closest('form');
-
-    function restoreAll() {
-      while (restores.length) {
-        try {
-          restores.pop()();
-        } catch (err) {
-        }
-      }
-    }
-
-    try {
-      if (form) {
-        const preventSubmit = function (event) {
-          event.preventDefault();
-          event.stopPropagation();
-        };
-        form.addEventListener('submit', preventSubmit, true);
-        restores.push(function () {
-          form.removeEventListener('submit', preventSubmit, true);
-        });
-      }
-
-      if (tag === 'BUTTON' || (tag === 'INPUT' && String(button.getAttribute('type') || '').toLowerCase() === 'submit')) {
-        const originalType = button.getAttribute('type');
-        button.setAttribute('type', 'button');
-        restores.push(function () {
-          if (originalType == null) {
-            button.removeAttribute('type');
-          } else {
-            button.setAttribute('type', originalType);
-          }
-        });
-      }
-
-      if (tag === 'A') {
-        const originalHref = button.getAttribute('href');
-        button.setAttribute('href', '#');
-        restores.push(function () {
-          if (originalHref == null) {
-            button.removeAttribute('href');
-          } else {
-            button.setAttribute('href', originalHref);
-          }
-        });
-      }
-
-      button.click();
-      await sleep(delayMs);
-      throwIfAborted(signal);
-    } finally {
-      restoreAll();
-    }
-  }
-
-  function getShelfPrefix(name) {
-    if (shelves && typeof shelves.parseName === 'function') {
-      const parsed = shelves.parseName(name);
-      return upper(parsed && parsed.prefix || '');
-    }
-    const match = upper(name || '').match(/^([A-Z]+)/);
-    return match ? match[1] : '';
+    return url.toString();
   }
 
   async function resolveInventoryUrlsForShelves(names, options) {
     const cfg = options || {};
-    const wanted = uniq((Array.isArray(names) ? names : []).map(upper)).filter(Boolean);
-    const signal = cfg.signal || null;
+    const wanted = uniq((Array.isArray(names) ? names : []).map(norm)).filter(Boolean);
     const onProgress = typeof cfg.onProgress === 'function' ? cfg.onProgress : null;
-    const result = new Map();
+    const urls = new Map();
+    const unresolved = [];
 
-    wanted.forEach(function (name) {
-      const cached = inventoryUrlCache.get(name);
-      if (cached) {
-        result.set(name, cached);
-      }
-    });
-
-    let unresolved = wanted.filter(function (name) {
-      return !result.get(name);
-    });
-
-    if (!unresolved.length) {
-      return {
-        urls: result,
-        unresolved: []
-      };
-    }
-
-    let ctx = await ensureGridFrame({
-      force: !!cfg.forceFrame,
-      timeoutMs: cfg.timeoutMs
-    });
-    harvestVisibleShelfEntries(ctx.doc);
-
-    unresolved.forEach(function (name) {
-      const cached = inventoryUrlCache.get(name);
-      if (cached) {
-        result.set(name, cached);
-      }
-    });
-    unresolved = unresolved.filter(function (name) {
-      return !result.get(name);
-    });
-
-    if (!unresolved.length) {
-      return {
-        urls: result,
-        unresolved: []
-      };
-    }
-
-    const prefixOrder = uniq(unresolved.map(getShelfPrefix).filter(Boolean));
-
-    for (let i = 0; i < prefixOrder.length; i += 1) {
-      throwIfAborted(signal);
-      const prefix = prefixOrder[i];
-      const button = findGroupButton(ctx.doc, prefix);
-      if (!button) continue;
-      if (onProgress) {
-        onProgress({
-          stage: 'group',
-          label: 'Scanning ' + prefix,
-          index: i + 1,
-          total: prefixOrder.length
-        });
-      }
-      await safeTriggerHarvestButton(button, { signal: signal });
-      ctx = await ensureGridFrame({
-        force: !isGridFrameLoaded(gridFrame, GRID_URL),
-        timeoutMs: cfg.timeoutMs
+    wanted.forEach(function (name, index) {
+      const built = buildInventoryUrlForShelf(name, {
+        isPresent: cfg.isPresent == null ? DEFAULT_PRESENT_ONLY : cfg.isPresent
       });
-      harvestVisibleShelfEntries(ctx.doc);
-      unresolved.forEach(function (name) {
-        const cached = inventoryUrlCache.get(name);
-        if (cached) {
-          result.set(name, cached);
-        }
-      });
-      unresolved = unresolved.filter(function (name) {
-        return !result.get(name);
-      });
-      if (!unresolved.length) {
-        break;
-      }
-    }
-
-    if (unresolved.length) {
-      const buttons = getHarvestGroupButtons(ctx.doc);
-      for (let i = 0; i < buttons.length; i += 1) {
-        throwIfAborted(signal);
-        const button = buttons[i];
-        const label = upper(button.textContent || '');
+      if (built) {
+        urls.set(upper(name), built);
         if (onProgress) {
           onProgress({
-            stage: 'fallback',
-            label: 'Scanning ' + label,
-            index: i + 1,
-            total: buttons.length
+            stage: 'build',
+            index: index + 1,
+            total: wanted.length,
+            label: 'Prepared ' + name
           });
         }
-        await safeTriggerHarvestButton(button, { signal: signal });
-        ctx = await ensureGridFrame({
-          force: !isGridFrameLoaded(gridFrame, GRID_URL),
-          timeoutMs: cfg.timeoutMs
-        });
-        harvestVisibleShelfEntries(ctx.doc);
-        unresolved.forEach(function (name) {
-          const cached = inventoryUrlCache.get(name);
-          if (cached) {
-            result.set(name, cached);
-          }
-        });
-        unresolved = unresolved.filter(function (name) {
-          return !result.get(name);
-        });
-        if (!unresolved.length) {
-          break;
-        }
+      } else {
+        unresolved.push(name);
       }
-    }
+    });
 
     return {
-      urls: result,
-      unresolved: unresolved.slice()
+      urls: urls,
+      unresolved: unresolved
     };
   }
 
@@ -617,7 +247,9 @@
     return [];
   }
 
-  function buildPagedUrl(baseUrl, page, pageSize) {
+  async function fetchShelfPageText(baseUrl, page, pageSize, options) {
+    const cfg = options || {};
+    throwIfAborted(cfg.signal);
     const url = new URL(String(baseUrl || ''), window.location.origin);
     if (pageSize) {
       url.searchParams.set('per_page', String(pageSize));
@@ -627,19 +259,12 @@
     } else {
       url.searchParams.delete('page');
     }
-    return url.toString();
-  }
-
-  async function fetchShelfPageText(baseUrl, page, pageSize, options) {
-    const cfg = options || {};
-    throwIfAborted(cfg.signal);
-    const url = buildPagedUrl(baseUrl, page, pageSize);
-    const res = await fetch(url, {
+    const res = await fetch(url.toString(), {
       credentials: 'same-origin',
       signal: cfg.signal || undefined
     });
     if (!res.ok) {
-      throw new Error('Shelf fetch failed HTTP ' + res.status + ' for ' + url);
+      throw new Error('Shelf fetch failed HTTP ' + res.status + ' for ' + url.toString());
     }
     return res.text();
   }
@@ -647,7 +272,7 @@
   async function loadShelfRowsByUrl(baseUrl, options) {
     const cfg = options || {};
     const pageSize = Math.max(1, Number(cfg.pageSize || DEFAULT_PAGE_SIZE));
-    const maxPages = Math.max(1, Number(cfg.maxPages || 50));
+    const maxPages = Math.max(1, Number(cfg.maxPages || DEFAULT_MAX_PAGES));
     const onProgress = typeof cfg.onProgress === 'function' ? cfg.onProgress : null;
     const all = [];
     const seen = new Set();
@@ -677,6 +302,17 @@
     }
 
     return all;
+  }
+
+  async function loadShelfRowsByShelf(shelfName, options) {
+    const cfg = options || {};
+    const url = buildInventoryUrlForShelf(shelfName, {
+      isPresent: cfg.isPresent == null ? DEFAULT_PRESENT_ONLY : cfg.isPresent
+    });
+    if (!url) {
+      throw new Error('Could not build inventory URL for ' + shelfName);
+    }
+    return loadShelfRowsByUrl(url, cfg);
   }
 
   // ============================================================
@@ -799,47 +435,6 @@
         'UEsBAhQDFAAAAAgAArOQXESVnL9wAQAAzQIAABAAAAAAAAAAAAAAAIABPyMAAGRvY1Byb3BzL2FwcC54bWxQSwUGAAAAAAsACwDBAgAA3SQAAAAA',
     ].join('');
   const WORD_XML_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
-
-  function base64ToUint8Array(base64) {
-    const binary = window.atob(String(base64 || ''));
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    return bytes;
-  }
-
-  function downloadBlobFile(filename, blob) {
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = String(filename || 'download');
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.setTimeout(function () {
-      window.URL.revokeObjectURL(url);
-    }, 1500);
-  }
-
-  async function loadStickerTemplateArrayBuffer(options) {
-    const cfg = options || {};
-    let lastErr = null;
-    if (cfg.templateUrl) {
-      try {
-        const resp = await fetch(cfg.templateUrl, { credentials: 'omit' });
-        if (!resp.ok) throw new Error('Sticker template fetch failed HTTP ' + resp.status);
-        return await resp.arrayBuffer();
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    if (cfg.templateBase64 || STICKER_TEMPLATE_DOCX_BASE64) {
-      const bytes = base64ToUint8Array(cfg.templateBase64 || STICKER_TEMPLATE_DOCX_BASE64);
-      return bytes.buffer.slice(0);
-    }
-    throw lastErr || new Error('Sticker DOCX template is not configured');
-  }
 
   function getXmlDirectChildrenByLocalName(node, localName) {
     return Array.from(node && node.childNodes ? node.childNodes : []).filter(function (child) {
@@ -986,15 +581,18 @@
     const baseTable = getXmlFirstDirectChildByLocalName(body, 'tbl');
     const sectPr = getXmlFirstDirectChildByLocalName(body, 'sectPr');
     if (!baseTable || !sectPr) throw new Error('Sticker DOCX template is missing required nodes');
+
     const baseRows = getXmlDirectChildrenByLocalName(baseTable, 'tr');
     const baseCells = [];
     for (let i = 0; i < baseRows.length; i += 1) {
       Array.prototype.push.apply(baseCells, getXmlDirectChildrenByLocalName(baseRows[i], 'tc'));
     }
     if (!baseCells.length) throw new Error('Sticker DOCX template has no table cells');
+
     const firstTemplateCell = baseCells[0];
     const templateParagraphs = getXmlDirectChildrenByLocalName(firstTemplateCell, 'p');
     if (!templateParagraphs.length) throw new Error('Sticker DOCX template has no first-cell paragraph template');
+
     let blankParagraphTemplate = null;
     for (let i = 1; i < baseCells.length; i += 1) {
       const candidateParagraphs = getXmlDirectChildrenByLocalName(baseCells[i], 'p');
@@ -1010,12 +608,14 @@
     if (!blankParagraphTemplate) {
       blankParagraphTemplate = templateParagraphs[0];
     }
+
     const totalEntries = Array.isArray(entries) ? entries.length : 0;
     const perPage = baseCells.length || Number(cfg.perPage || 50);
     const totalPages = Math.max(1, Math.ceil(totalEntries / perPage));
     while (body.firstChild) {
       body.removeChild(body.firstChild);
     }
+
     for (let pageIndex = 0; pageIndex < totalPages; pageIndex += 1) {
       const pageTable = baseTable.cloneNode(true);
       const pageRows = getXmlDirectChildrenByLocalName(pageTable, 'tr');
@@ -1032,6 +632,7 @@
         body.appendChild(buildStickerPageBreakParagraph(xmlDoc));
       }
     }
+
     body.appendChild(sectPr);
     const serialized = new XMLSerializer().serializeToString(xmlDoc);
     if (/^<\?xml/i.test(serialized)) {
@@ -1040,36 +641,32 @@
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' + serialized;
   }
 
-  function parseSkuSortParts(value) {
-    const raw = upper(value || '');
-    const match = raw.match(/^(.*?)-(\d+)$/);
-    return {
-      label: match ? match[1] : raw,
-      position: match ? parseInt(match[2], 10) : Number.MAX_SAFE_INTEGER,
-      raw: raw
-    };
-  }
-
-  function compareEntriesForExport(a, b) {
-    const aSku = parseSkuSortParts(a && a.oldSku || '');
-    const bSku = parseSkuSortParts(b && b.oldSku || '');
-    const labelCmp = compareNatural(aSku.label, bSku.label);
-    if (labelCmp) return labelCmp;
-    if (aSku.position !== bSku.position) return aSku.position - bSku.position;
-    const aTs = Number(a && a.ts || 0);
-    const bTs = Number(b && b.ts || 0);
-    if (aTs !== bTs) return aTs - bTs;
-    return compareNatural(a && a.id || '', b && b.id || '');
+  async function loadStickerTemplateArrayBuffer(options) {
+    const cfg = options || {};
+    let lastErr = null;
+    if (cfg.templateUrl) {
+      try {
+        const resp = await fetch(cfg.templateUrl, { credentials: 'omit' });
+        if (!resp.ok) throw new Error('Sticker template fetch failed HTTP ' + resp.status);
+        return await resp.arrayBuffer();
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (STICKER_TEMPLATE_DOCX_BASE64) {
+      const bytes = base64ToUint8Array(STICKER_TEMPLATE_DOCX_BASE64);
+      return bytes.buffer.slice(0);
+    }
+    throw lastErr || new Error('Sticker DOCX template is not configured');
   }
 
   async function exportStickerTemplateDocx(entries, options) {
+    const cfg = options || {};
     if (!window.JSZip || typeof window.JSZip.loadAsync !== 'function') {
       throw new Error('JSZip is not available');
     }
-    const cfg = options || {};
     const list = Array.isArray(entries) ? entries.slice().sort(compareEntriesForExport) : [];
     if (!list.length) throw new Error('No sticker rows to export');
-
     const templateBuffer = await loadStickerTemplateArrayBuffer(cfg);
     const zip = await window.JSZip.loadAsync(templateBuffer);
     const documentFile = zip.file('word/document.xml');
@@ -1087,11 +684,7 @@
     const labelCount = stickerEntries.length;
     const perPage = Number(cfg.perPage || 50);
     const sheetCount = Math.max(1, Math.ceil(labelCount / perPage));
-    const target = String(cfg.target || 'batch')
-      .trim()
-      .replace(/[^a-z0-9]+/gi, '-')
-      .replace(/^-+|-+$/g, '')
-      .toLowerCase() || 'batch';
+    const target = sanitizeFilePart(cfg.target || 'batch', 'batch');
     const prefix = cfg.filenamePrefix || 'resku-sticker-template';
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '');
     const filename = prefix + '-' + target + '-' + labelCount + '-labels-' + sheetCount + '-sheet' + (sheetCount === 1 ? '' : 's') + '-' + stamp + '.docx';
@@ -1112,14 +705,12 @@
   // ============================================================
 
   KOTN.reskuMobileUtils = {
-    version: '0.1.0',
-    harvestVisibleShelfEntries,
+    version: '0.2.0',
+    buildInventoryUrlForShelf,
     resolveInventoryUrlsForShelves,
     parseInventoryHTML,
     loadShelfRowsByUrl,
-    exportStickerTemplateDocx,
-    caches: {
-      inventoryUrlCache
-    }
+    loadShelfRowsByShelf,
+    exportStickerTemplateDocx
   };
 })();
