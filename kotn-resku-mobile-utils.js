@@ -1,5 +1,5 @@
 // KOTN ReSKU Mobile Utilities
-// v0.2.0
+// v0.3.0
 
 (function () {
   'use strict';
@@ -12,8 +12,9 @@
 
   const INVENTORY_PATH = '/management/shelves/inventory';
   const DEFAULT_PRESENT_ONLY = true;
-  const DEFAULT_PAGE_SIZE = 100;
-  const DEFAULT_MAX_PAGES = 50;
+  const DEFAULT_PAGE_SIZE = 0;
+  const DEFAULT_MAX_PAGES = 20;
+  const DEFAULT_ORDER_BY = '';
 
   // ============================================================
   // Core References
@@ -136,6 +137,20 @@
   // Inventory URL Builder
   // ============================================================
 
+  let htmlDecodeEl = null;
+
+  function decodeHtml(value) {
+    if (!htmlDecodeEl) {
+      htmlDecodeEl = document.createElement('textarea');
+    }
+    htmlDecodeEl.innerHTML = String(value == null ? '' : value);
+    return htmlDecodeEl.value;
+  }
+
+  function stripTags(value) {
+    return norm(decodeHtml(String(value == null ? '' : value).replace(/<[^>]+>/g, ' ')));
+  }
+
   function buildInventoryUrlForShelf(shelfName, options) {
     const cfg = options || {};
     const shelf = norm(shelfName || '');
@@ -147,7 +162,10 @@
     } else if (cfg.isPresent || cfg.isPresent == null) {
       url.searchParams.set('is_present', 'true');
     }
-    if (cfg.pageSize) {
+    if (cfg.orderBy || DEFAULT_ORDER_BY) {
+      url.searchParams.set('order_by', String(cfg.orderBy || DEFAULT_ORDER_BY));
+    }
+    if (cfg.includePageSize && cfg.pageSize) {
       url.searchParams.set('per_page', String(cfg.pageSize));
     }
     if (cfg.page && Number(cfg.page) > 1) {
@@ -165,7 +183,10 @@
 
     wanted.forEach(function (name, index) {
       const built = buildInventoryUrlForShelf(name, {
-        isPresent: cfg.isPresent == null ? DEFAULT_PRESENT_ONLY : cfg.isPresent
+        isPresent: cfg.isPresent == null ? DEFAULT_PRESENT_ONLY : cfg.isPresent,
+        orderBy: cfg.orderBy || DEFAULT_ORDER_BY,
+        includePageSize: !!cfg.includePageSize,
+        pageSize: cfg.pageSize || DEFAULT_PAGE_SIZE
       });
       if (built) {
         urls.set(upper(name), built);
@@ -192,9 +213,39 @@
   // Inventory Page Parsing
   // ============================================================
 
-  function parseInventoryHTML(html) {
-    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  function parseInventoryHTMLFast(html) {
+    const text = String(html || '');
+    if (!text) return [];
+    const parts = text.split(/<div class="index-row present">/i);
+    if (parts.length <= 1) {
+      return [];
+    }
+    const rows = [];
+    for (let i = 1; i < parts.length; i += 1) {
+      const segment = parts[i];
+      const listingMatch = segment.match(/<div class="index-cell listing-id">[\s\S]*?(?:<a[^>]*>|<span class="text">)\s*(\d{6,})\s*(?:<\/a>|<\/span>)/i);
+      if (!listingMatch) {
+        continue;
+      }
+      const skuMatch = segment.match(/<div class="index-cell sku">[\s\S]*?<span class="text">([\s\S]*?)<\/span>/i);
+      const titleAttrMatch = segment.match(/<div class="index-cell title">[\s\S]*?<span class="text"[^>]*title="([^"]*)"[^>]*>/i);
+      const titleTextMatch = titleAttrMatch ? null : segment.match(/<div class="index-cell title">[\s\S]*?<span class="text"[^>]*>([\s\S]*?)<\/span>/i);
+      rows.push({
+        listing: listingMatch[1],
+        sku: stripTags(skuMatch ? skuMatch[1] : ''),
+        title: norm(titleAttrMatch ? decodeHtml(titleAttrMatch[1]) : stripTags(titleTextMatch ? titleTextMatch[1] : ''))
+      });
+    }
+    return rows;
+  }
 
+  function parseInventoryHTML(html) {
+    const fastRows = parseInventoryHTMLFast(html);
+    if (fastRows.length) {
+      return fastRows;
+    }
+
+    const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
     const root = doc.querySelector('#inventoryItems.index-table-v3');
     if (root) {
       const rows = [];
@@ -223,9 +274,9 @@
       const headers = Array.from(table.querySelectorAll('thead th,tr th')).map(function (th) {
         return norm(th.textContent).toLowerCase();
       });
-      const skuIndex = headers.findIndex(function (h) { return /^sku\b/.test(h); });
-      const listingIndex = headers.findIndex(function (h) { return /^listing\b/.test(h); });
-      const titleIndex = headers.findIndex(function (h) { return /^title\b/.test(h); });
+      const skuIndex = headers.findIndex(function (h) { return /^sku/.test(h); });
+      const listingIndex = headers.findIndex(function (h) { return /^listing/.test(h); });
+      const titleIndex = headers.findIndex(function (h) { return /^title/.test(h); });
       if (skuIndex === -1 || listingIndex === -1 || titleIndex === -1) continue;
 
       const rows = [];
@@ -247,21 +298,42 @@
     return [];
   }
 
-  async function fetchShelfPageText(baseUrl, page, pageSize, options) {
+  function extractMaxPageNumber(html) {
+    const text = String(html || '');
+    const matches = text.match(/[?&]page=(\d+)/ig) || [];
+    let maxPage = 1;
+    matches.forEach(function (fragment) {
+      const match = String(fragment).match(/(\d+)/);
+      const value = match ? parseInt(match[1], 10) : 1;
+      if (Number.isFinite(value) && value > maxPage) {
+        maxPage = value;
+      }
+    });
+    return maxPage;
+  }
+
+  async function fetchShelfPageText(baseUrl, page, options) {
     const cfg = options || {};
     throwIfAborted(cfg.signal);
     const url = new URL(String(baseUrl || ''), window.location.origin);
-    if (pageSize) {
-      url.searchParams.set('per_page', String(pageSize));
-    }
     if (page && page > 1) {
       url.searchParams.set('page', String(page));
     } else {
       url.searchParams.delete('page');
     }
+    if (cfg.includePageSize && cfg.pageSize) {
+      url.searchParams.set('per_page', String(cfg.pageSize));
+    } else if (!cfg.keepExistingPageSize) {
+      url.searchParams.delete('per_page');
+    }
     const res = await fetch(url.toString(), {
       credentials: 'same-origin',
-      signal: cfg.signal || undefined
+      signal: cfg.signal || undefined,
+      headers: {
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'x-requested-with': 'XMLHttpRequest'
+      },
+      cache: 'no-store'
     });
     if (!res.ok) {
       throw new Error('Shelf fetch failed HTTP ' + res.status + ' for ' + url.toString());
@@ -271,31 +343,48 @@
 
   async function loadShelfRowsByUrl(baseUrl, options) {
     const cfg = options || {};
-    const pageSize = Math.max(1, Number(cfg.pageSize || DEFAULT_PAGE_SIZE));
     const maxPages = Math.max(1, Number(cfg.maxPages || DEFAULT_MAX_PAGES));
     const onProgress = typeof cfg.onProgress === 'function' ? cfg.onProgress : null;
     const all = [];
     const seen = new Set();
 
-    for (let page = 1; page <= maxPages; page += 1) {
+    const firstHtml = await fetchShelfPageText(baseUrl, 1, cfg);
+    const firstRows = parseInventoryHTML(firstHtml);
+    firstRows.forEach(function (row) {
+      if (!row || !row.listing || seen.has(row.listing)) return;
+      seen.add(row.listing);
+      all.push(row);
+    });
+    if (onProgress) {
+      onProgress({
+        page: 1,
+        pageCount: firstRows.length,
+        totalCount: all.length
+      });
+    }
+
+    const maxPage = Math.min(maxPages, extractMaxPageNumber(firstHtml));
+    if (maxPage <= 1) {
+      return all;
+    }
+
+    for (let page = 2; page <= maxPage; page += 1) {
       throwIfAborted(cfg.signal);
-      const html = await fetchShelfPageText(baseUrl, page, pageSize, cfg);
+      const html = await fetchShelfPageText(baseUrl, page, cfg);
       const rows = parseInventoryHTML(html);
       rows.forEach(function (row) {
-        if (!row || !row.listing) return;
-        if (seen.has(row.listing)) return;
+        if (!row || !row.listing || seen.has(row.listing)) return;
         seen.add(row.listing);
         all.push(row);
       });
       if (onProgress) {
         onProgress({
           page: page,
-          pageSize: pageSize,
           pageCount: rows.length,
           totalCount: all.length
         });
       }
-      if (rows.length < pageSize) {
+      if (!rows.length) {
         break;
       }
       await sleep(20);
@@ -307,7 +396,10 @@
   async function loadShelfRowsByShelf(shelfName, options) {
     const cfg = options || {};
     const url = buildInventoryUrlForShelf(shelfName, {
-      isPresent: cfg.isPresent == null ? DEFAULT_PRESENT_ONLY : cfg.isPresent
+      isPresent: cfg.isPresent == null ? DEFAULT_PRESENT_ONLY : cfg.isPresent,
+      orderBy: cfg.orderBy || DEFAULT_ORDER_BY,
+      includePageSize: !!cfg.includePageSize,
+      pageSize: cfg.pageSize || DEFAULT_PAGE_SIZE
     });
     if (!url) {
       throw new Error('Could not build inventory URL for ' + shelfName);
@@ -705,7 +797,7 @@
   // ============================================================
 
   KOTN.reskuMobileUtils = {
-    version: '0.2.0',
+    version: '0.3.0',
     buildInventoryUrlForShelf,
     resolveInventoryUrlsForShelves,
     parseInventoryHTML,
