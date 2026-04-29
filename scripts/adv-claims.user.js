@@ -6,8 +6,8 @@
 // @description  Sorting, filters, compact views, OA integration, scope filtering, and panel activity logging on the shelves grid
 // @match        https://kotnauction.com/management/shelves/grid
 // @require      https://raw.githubusercontent.com/rmdevlab/tm.kotn/refs/heads/main/kotn-core-utils.js
-// @updateURL    https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/adv-claims.js
-// @downloadURL  https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/adv-claims.js
+// @updateURL    https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/adv-claims.user.js
+// @downloadURL  https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/adv-claims.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
