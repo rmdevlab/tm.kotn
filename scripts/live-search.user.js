@@ -6,8 +6,8 @@
 // @description  Adds live search to supported management dropdown menus.
 // @match        https://kotnauction.com/management/*
 // @require      https://raw.githubusercontent.com/rmdevlab/tm.kotn/refs/heads/main/kotn-core-utils.js
-// @updateURL    https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/live-search.js
-// @downloadURL  https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/live-search.js
+// @updateURL    https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/live-search.user.js
+// @downloadURL  https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/live-search.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
