@@ -6,8 +6,8 @@
 // @description  Adds quick public toggle and bid removal controls to listing edit pages.
 // @match        https://kotnauction.com/management/listings/*/edit
 // @require      https://raw.githubusercontent.com/rmdevlab/tm.kotn/refs/heads/main/kotn-core-utils.js
-// @updateURL    https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/listing-edit-quick-controls.js
-// @downloadURL  https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/listing-edit-quick-controls.js
+// @updateURL    https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/listing-edit-quick-controls.user.js
+// @downloadURL  https://raw.githubusercontent.com/rmdevlab/tm.kotn/main/scripts/listing-edit-quick-controls.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
